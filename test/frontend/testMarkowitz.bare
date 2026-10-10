@@ -1,0 +1,11 @@
+include <unittest.bare>
+include <unittestMock.bare>
+include '../../frontend/markowitz.bare'
+
+
+async function testMarkowitzMain():
+    unittestMockAll()
+    markowitzMain()
+    unittestEqual(arrayLength(unittestMockEnd()) > 0, true)
+endfunction
+unittestRunTest('testMarkowitzMain')

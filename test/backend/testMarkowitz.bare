@@ -1,0 +1,15 @@
+include <unittest.bare>
+
+
+# The static files the host passes to the backend
+markowitzStatics = {'/index.html': 'frontend/index.html'}
+
+
+include '../../backend/markowitz.bare'
+
+
+async function testMarkowitzApplication():
+    response = markowitzApplication({'REQUEST_METHOD': 'GET', 'PATH_INFO': '/doc/', 'QUERY_STRING': '', 'wsgi.input': ''})
+    unittestEqual(objectGet(response, 'status'), '200 OK')
+endfunction
+unittestRunTest('testMarkowitzApplication')

@@ -1,0 +1,15 @@
+include <unittest.bare>
+include <unittestMock.bare>
+
+
+# Start coverage
+unittestCoverageStart()
+
+# Test includes
+include 'testMarkowitz.bare'
+
+# Stop coverage
+unittestCoverageStop()
+
+# Test report
+return unittestReport({'coverageExclude': ['runTests.bare'], 'coverageMin': 100})

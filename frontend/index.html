@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <title>Markowitz</title>
+        <meta charset="utf-8">
+        <meta name="description" content="Markowitz portfolio analyzer">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="stylesheet" href="./markdown-up/app.css">
+        <link rel="preload" href="./markdown-up/bare-script/static/markdown.css" as="style">
+        <link rel="modulepreload" href="./markdown-up/lib/appImports.js" as="script">
+    </head>
+    <script type="module">
+        import {MarkdownUp} from './markdown-up/lib/appImports.js';
+        const app = new MarkdownUp(window, {'url': 'markowitz.md'});
+        app.run();
+    </script>
+</html>
