@@ -1,11 +1,198 @@
 include <unittest.bare>
+include <unittestMock.bare>
 
 
 # The static files the host passes to the backend
 markowitzStatics = {'/index.html': 'frontend/index.html'}
 
+# The database credentials the host passes to the backend
+markowitzCouchCredentials = 'admin:secret'
+
 
 include '../../backend/markowitz.bare'
+
+
+# The test database URL and headers
+testCouchURL = 'http://127.0.0.1:5984/markowitz'
+testCouchHeaders = {'Authorization': 'Basic YWRtaW46c2VjcmV0', 'Content-Type': 'application/json'}
+
+# The test time
+testNow = datetimeNew(2026, 10, 10, 12, 30, 0)
+testNowISO = datetimeISOFormat(testNow)
+
+
+# Call the application with a request - returns [status, response object]
+async function testAction(method, path, query, body):
+    response = markowitzApplication({ \
+        'REQUEST_METHOD': method, \
+        'PATH_INFO': path, \
+        'QUERY_STRING': query, \
+        'wsgi.input': if(body != null, jsonStringify(body), '') \
+    })
+    return [objectGet(response, 'status'), jsonParse(objectGet(response, 'content'))]
+endfunction
+
+
+# Start mocking, with the test time
+function testMockAll(data):
+    unittestMockAll(data)
+    unittestMockOne('datetimeNow', testDatetimeNow)
+endfunction
+
+function testDatetimeNow():
+    return testNow
+endfunction
+
+
+# Round a value's numbers, recursively, for comparison
+function testRound(value):
+    type = systemType(value)
+    if type == 'number':
+        return mathRound(value * 1e9) / 1e9
+    elif type == 'array':
+        rounded = []
+        for item in value:
+            arrayPush(rounded, testRound(item))
+        endfor
+        return rounded
+    elif type == 'object':
+        rounded = {}
+        for key in objectKeys(value):
+            objectSet(rounded, key, testRound(objectGet(value, key)))
+        endfor
+        return rounded
+    endif
+    return value
+endfunction
+
+
+# A CouchDB request call log entry
+function testCouchCall(path, body, method):
+    request = {'url': testCouchURL + path, 'headers': testCouchHeaders}
+    if body != null:
+        objectSet(request, 'body', jsonStringify(body))
+    endif
+    if method != null:
+        objectSet(request, 'method', method)
+    endif
+    return ['systemFetch', [request]]
+endfunction
+
+
+# The test stocks' monthly price relatives, 2020-02 through 2023-04 - four decimal places, as on the original program's
+# input cards
+testRelatives = [ \
+    [ \
+        1.0456, 1.0558, 0.8784, 1.0058, 1.0436, 0.9283, 0.9976, 0.9836, 1.0556, 0.9823, 0.9901, 0.9986, 0.9762, \
+        1.0999, 1.025, 1.0249, 0.9888, 1.0512, 0.9525, 1.0132, 1.0112, 1.0127, 0.9835, 1.0432, 0.9478, 0.9945, \
+        0.9984, 0.9573, 0.9561, 1.0579, 1.0713, 0.9692, 1.0516, 1.017, 1.1354, 0.9809, 0.9996, 1.043, 1.0357 \
+    ], \
+    [ \
+        1.0108, 1.1376, 1.0721, 1.0528, 0.995, 1.1197, 1.0286, 0.9314, 0.9356, 0.9788, 1.1042, 1.035, 0.9397, \
+        0.9724, 0.9419, 0.8898, 1.0403, 1.0514, 1.04, 0.9706, 1.0519, 1.0206, 0.9933, 0.9634, 1.0379, 0.9607, \
+        1.0581, 0.9875, 0.9436, 0.9623, 1.0085, 1.1016, 1.0036, 0.9994, 0.9921, 0.9508, 1.0592, 1.0297, 1.059 \
+    ], \
+    [ \
+        0.9849, 1.021, 1.0671, 0.9223, 1.0046, 1.0392, 1.0064, 1.0892, 1.0258, 1.0905, 1.0285, 0.9985, 0.9831, \
+        0.9374, 0.9571, 0.9599, 1.0033, 1.0366, 1.0372, 0.9934, 1.0872, 0.9638, 0.9658, 1.0468, 1.0015, 1.0452, \
+        1.017, 0.9914, 1.0459, 1.1395, 0.9688, 1.0623, 0.9539, 0.9584, 1.0586, 0.935, 0.9993, 1.0544, 1.1194 \
+    ], \
+    [ \
+        1.0042, 0.9729, 1.0274, 0.9373, 1.0679, 1.012, 1.0242, 1.0365, 1.0316, 1.0315, 0.9913, 1.0632, 1.072, \
+        1.1133, 0.9225, 1.1005, 0.941, 1.0694, 0.9025, 0.9095, 1.0291, 1.0448, 1.0252, 1.0592, 0.9909, 0.9331, \
+        1.0083, 0.9971, 1.0204, 1.0273, 0.9802, 1.061, 0.9711, 0.8642, 0.9851, 0.9575, 1.077, 1.029, 1.0971 \
+    ] \
+]
+testSymbols = ['A', 'B', 'C', 'D']
+
+# The test target annual returns - the original program's monthly price relative targets, annualized
+testTargets = [markowitzAnnualReturn(1.005, 12), markowitzAnnualReturn(1.015, 12), markowitzAnnualReturn(1.08, 12)]
+
+# The test run's stock statistics and portfolios, as computed by a transliteration of the original Fortran program
+testRunStocks = [ \
+    {'symbol': 'A', 'expectedReturn': 31.237914567341374, 'variance': 23.176636108251117, 'realizedReturn': 35.949660852698194}, \
+    {'symbol': 'B', 'expectedReturn': -19.950708023795393, 'variance': 30.600710345583668, 'realizedReturn': 77.96663127832548}, \
+    {'symbol': 'C', 'expectedReturn': 11.60763751884646, 'variance': 24.541968416154234, 'realizedReturn': 93.52913207469793}, \
+    {'symbol': 'D', 'expectedReturn': -23.004686657953144, 'variance': 30.26582797964631, 'realizedReturn': 118.52904733713197} \
+]
+testRunPortfolios = [ \
+    { \
+        'target': arrayGet(testTargets, 0), \
+        'solved': true, \
+        'allocations': [ \
+            {'symbol': 'A', 'weight': 0.39587544733271784}, \
+            {'symbol': 'B', 'weight': 0.22878186905668152}, \
+            {'symbol': 'C', 'weight': 0.2674295111830437}, \
+            {'symbol': 'D', 'weight': 0.1079131724275569} \
+        ], \
+        'deleted': [], \
+        'variance': 6.38191498843673, \
+        'realizedReturn': 67.91586178632521 \
+    }, \
+    { \
+        'target': arrayGet(testTargets, 1), \
+        'solved': true, \
+        'allocations': [ \
+            {'symbol': 'A', 'weight': 0.5567053089869428}, \
+            {'symbol': 'B', 'weight': 0.06641041655307287}, \
+            {'symbol': 'C', 'weight': 0.3768842744599843} \
+        ], \
+        'deleted': ['D'], \
+        'variance': 9.109149470933982, \
+        'realizedReturn': 58.68235370379473 \
+    }, \
+    {'target': arrayGet(testTargets, 2), 'solved': false, 'allocations': [], 'deleted': ['D', 'B', 'C']} \
+]
+
+
+# Create a test stock's prices from its relatives - 100 in 2020-01
+function testPrices(relatives):
+    monthIndex = markowitzMonthIndex('2020-01')
+    price = 100
+    prices = objectNew('2020-01', price)
+    for relative in relatives:
+        monthIndex = monthIndex + 1
+        price = price * relative
+        objectSet(prices, markowitzMonthString(monthIndex), price)
+    endfor
+    return prices
+endfunction
+
+
+# The test stock documents' run fields
+function testStockDocs():
+    docs = []
+    for symbol, ixSymbol in testSymbols:
+        arrayPush(docs, {'symbol': symbol, 'lastMonth': '2023-04', 'prices': testPrices(arrayGet(testRelatives, ixSymbol))})
+    endfor
+    return docs
+endfunction
+
+
+# A test Yahoo Finance chart API response - 2026-06 (no price) through 2026-10 (the current month)
+function testYahooResponse(meta):
+    objectAssign(meta, {'gmtoffset': -14400, 'regularMarketTime': 1791576000})
+    return jsonStringify({'chart': {'result': [{ \
+        'meta': meta, \
+        'timestamp': [1780286400, 1782878400, 1785556800, 1788235200, 1791576000], \
+        'indicators': { \
+            'quote': [{'close': [null, 9.5, 10.5, 12.5, 13.5]}], \
+            'adjclose': [{'adjclose': [null, 9, 10, 12, 13]}] \
+        } \
+    }]}})
+endfunction
+
+
+# The test Yahoo Finance chart API URL
+function testYahooURL(symbol):
+    return 'https://query1.finance.yahoo.com/v8/finance/chart/' + symbol + \
+        '?period1=-2208988800&period2=9999999999&interval=1mo'
+endfunction
+
+
+#
+# Application tests
+#
 
 
 async function testMarkowitzApplication():
@@ -13,3 +200,722 @@ async function testMarkowitzApplication():
     unittestEqual(objectGet(response, 'status'), '200 OK')
 endfunction
 unittestRunTest('testMarkowitzApplication')
+
+
+async function testMarkowitzApplication_static():
+    response = markowitzApplication({'REQUEST_METHOD': 'GET', 'PATH_INFO': '/index.html', 'QUERY_STRING': '', 'wsgi.input': ''})
+    unittestEqual(objectGet(response, 'status'), '200 OK')
+    unittestDeepEqual(objectGet(response, 'headers'), [['Content-Type', 'text/html; charset=utf-8']])
+    unittestEqual(stringIndexOf(objectGet(response, 'content'), '<title>Markowitz</title>') != -1, true)
+endfunction
+unittestRunTest('testMarkowitzApplication_static')
+
+
+function testMarkowitzCouchHeaders():
+    unittestEqual(markowitzCouchURL, testCouchURL)
+    unittestDeepEqual(markowitzCouchHeaders, testCouchHeaders)
+endfunction
+unittestRunTest('testMarkowitzCouchHeaders')
+
+
+#
+# getStocks tests
+#
+
+
+async function testGetStocks():
+    stockIBM = { \
+        'symbol': 'IBM', 'name': 'International Business Machines', 'currency': 'USD', \
+        'firstMonth': '1962-01', 'lastMonth': '2026-09', 'monthCount': 777, 'updated': testNowISO \
+    }
+    stockKO = {'symbol': 'KO', 'firstMonth': '1985-01', 'lastMonth': '2026-09', 'monthCount': 501, 'updated': testNowISO}
+    findKO = objectCopy(stockKO)
+    objectSet(findKO, 'name', null)
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': [findKO, stockIBM]}))})
+    unittestDeepEqual(testAction('GET', '/getStocks', '', null), ['200 OK', {'stocks': [stockIBM, stockKO]}])
+    unittestDeepEqual(unittestMockEnd(), [ \
+        testCouchCall('/_find', {'selector': {'type': 'stock'}, 'fields': markowitzStockInfoFields, 'limit': 100000}) \
+    ])
+endfunction
+unittestRunTest('testGetStocks')
+
+
+async function testGetStocks_databaseError():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('GET', '/getStocks', '', null), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testGetStocks_databaseError')
+
+
+#
+# getStock tests
+#
+
+
+async function testGetStock():
+    doc = { \
+        '_id': 'stock:IBM', '_rev': '1-abc', 'type': 'stock', 'symbol': 'IBM', 'name': 'IBM', 'currency': 'USD', \
+        'firstMonth': '2026-07', 'lastMonth': '2026-08', 'monthCount': 2, 'updated': testNowISO, \
+        'prices': {'2026-07': 9, '2026-08': 10} \
+    }
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/stock%3AIBM', jsonStringify(doc))})
+    unittestDeepEqual(testAction('GET', '/getStock', 'symbol=ibm', null), ['200 OK', { \
+        'stock': { \
+            'symbol': 'IBM', 'name': 'IBM', 'currency': 'USD', 'firstMonth': '2026-07', 'lastMonth': '2026-08', \
+            'monthCount': 2, 'updated': testNowISO \
+        }, \
+        'prices': {'2026-07': 9, '2026-08': 10} \
+    }])
+    unittestDeepEqual(unittestMockEnd(), [testCouchCall('/stock%3AIBM')])
+endfunction
+unittestRunTest('testGetStock')
+
+
+async function testGetStock_unknown():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('GET', '/getStock', 'symbol=XYZ', null), \
+        ['404 Not Found', {'error': 'UnknownStock', 'message': 'Unknown stock "XYZ"'}] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [testCouchCall('/stock%3AXYZ')])
+endfunction
+unittestRunTest('testGetStock_unknown')
+
+
+async function testGetStock_invalidInput():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('GET', '/getStock', '', null), \
+        ['400 Bad Request', { \
+            'error': 'InvalidInput', \
+            'message': 'Required member "symbol" missing (query string)' \
+        }] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [])
+endfunction
+unittestRunTest('testGetStock_invalidInput')
+
+
+#
+# updateStocks tests
+#
+
+
+async function testUpdateStocks():
+    yahooFull = testYahooResponse({'longName': 'Test Corporation', 'shortName': 'Test Corp', 'currency': 'USD'})
+    yahooShort = testYahooResponse({'shortName': 'Test Corp'})
+    revs = {'rows': [ \
+        {'id': 'stock:IBM', 'key': 'stock:IBM', 'value': {'rev': '1-abc'}}, \
+        {'key': 'stock:KO', 'error': 'not_found'}, \
+        {'key': 'stock:NEW', 'error': 'not_found'}, \
+        {'id': 'stock:OLD', 'key': 'stock:OLD', 'value': {'rev': '2-def', 'deleted': true}}, \
+        {'key': 'stock:XYZ', 'error': 'not_found'} \
+    ]}
+    saveResults = [ \
+        {'ok': true, 'id': 'stock:IBM', 'rev': '2-abc'}, \
+        {'id': 'stock:KO', 'error': 'conflict', 'reason': 'Document update conflict.'}, \
+        {'ok': true, 'id': 'stock:NEW', 'rev': '1-new'}, \
+        {'ok': true, 'id': 'stock:OLD', 'rev': '3-def'} \
+    ]
+    fetchData = {}
+    objectSet(fetchData, testYahooURL('IBM'), yahooFull)
+    objectSet(fetchData, testYahooURL('KO'), yahooFull)
+    objectSet(fetchData, testYahooURL('NEW'), yahooShort)
+    objectSet(fetchData, testYahooURL('OLD'), yahooFull)
+    objectSet(fetchData, testCouchURL + '/_all_docs', jsonStringify(revs))
+    objectSet(fetchData, testCouchURL + '/_bulk_docs', jsonStringify(saveResults))
+    testMockAll({'systemFetch': fetchData})
+
+    stockFull = { \
+        'name': 'Test Corporation', 'currency': 'USD', 'firstMonth': '2026-07', 'lastMonth': '2026-09', \
+        'monthCount': 3, 'updated': testNowISO \
+    }
+    stockShort = {'name': 'Test Corp', 'firstMonth': '2026-07', 'lastMonth': '2026-09', 'monthCount': 3, 'updated': testNowISO}
+    stockIBM = objectAssign({'symbol': 'IBM'}, stockFull)
+    stockNEW = objectAssign({'symbol': 'NEW'}, stockShort)
+    stockOLD = objectAssign({'symbol': 'OLD'}, stockFull)
+    unittestDeepEqual( \
+        testAction('POST', '/updateStocks', '', {'symbols': ['old', 'XYZ', 'NEW', 'ko', 'ibm', 'IBM']}), \
+        ['200 OK', {'results': [ \
+            {'symbol': 'IBM', 'stock': stockIBM}, \
+            {'symbol': 'KO', 'error': 'Database update failed (conflict)'}, \
+            {'symbol': 'NEW', 'stock': stockNEW}, \
+            {'symbol': 'OLD', 'stock': stockOLD}, \
+            {'symbol': 'XYZ', 'error': 'Download failed - is "XYZ" a Yahoo Finance symbol?'} \
+        ]}] \
+    )
+
+    # The stock documents
+    prices = {'2026-07': 9, '2026-08': 10, '2026-09': 12}
+    docFull = {'type': 'stock', 'name': 'Test Corporation', 'currency': 'USD', 'firstMonth': '2026-07', \
+        'lastMonth': '2026-09', 'monthCount': 3, 'prices': prices, 'updated': testNowISO}
+    docShort = {'type': 'stock', 'name': 'Test Corp', 'currency': null, 'firstMonth': '2026-07', \
+        'lastMonth': '2026-09', 'monthCount': 3, 'prices': prices, 'updated': testNowISO}
+    docs = [ \
+        objectAssign({'_id': 'stock:IBM', '_rev': '1-abc', 'symbol': 'IBM'}, docFull), \
+        objectAssign({'_id': 'stock:KO', 'symbol': 'KO'}, docFull), \
+        objectAssign({'_id': 'stock:NEW', 'symbol': 'NEW'}, docShort), \
+        objectAssign({'_id': 'stock:OLD', 'symbol': 'OLD'}, docFull) \
+    ]
+    yahooRequests = []
+    for symbol in ['IBM', 'KO', 'NEW', 'OLD', 'XYZ']:
+        arrayPush(yahooRequests, {'url': testYahooURL(symbol), 'headers': {'User-Agent': 'Mozilla/5.0 (compatible; Markowitz)'}})
+    endfor
+    unittestDeepEqual(unittestMockEnd(), [ \
+        ['systemFetch', [yahooRequests]], \
+        testCouchCall('/_all_docs', {'keys': ['stock:IBM', 'stock:KO', 'stock:NEW', 'stock:OLD', 'stock:XYZ']}), \
+        testCouchCall('/_bulk_docs', {'docs': docs}) \
+    ])
+endfunction
+unittestRunTest('testUpdateStocks')
+
+
+async function testUpdateStocks_revsError():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('POST', '/updateStocks', '', {'symbols': ['IBM']}), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 2)
+endfunction
+unittestRunTest('testUpdateStocks_revsError')
+
+
+async function testUpdateStocks_saveError():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_all_docs', jsonStringify({'rows': []}))})
+    unittestDeepEqual( \
+        testAction('POST', '/updateStocks', '', {'symbols': ['IBM']}), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestDeepEqual(arrayGet(unittestMockEnd(), 2), testCouchCall('/_bulk_docs', {'docs': []}))
+endfunction
+unittestRunTest('testUpdateStocks_saveError')
+
+
+async function testUpdateStocks_invalidInput():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('POST', '/updateStocks', '', {'symbols': []}), \
+        ['400 Bad Request', { \
+            'error': 'InvalidInput', \
+            'member': 'symbols', \
+            'message': 'Invalid value [] (type "array") for member "symbols", expected type "array" [len > 0] (content)' \
+        }] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [])
+endfunction
+unittestRunTest('testUpdateStocks_invalidInput')
+
+
+#
+# deleteStock tests
+#
+
+
+async function testDeleteStock():
+    fetchData = {}
+    objectSet(fetchData, testCouchURL + '/_all_docs', jsonStringify({'rows': [{'id': 'stock:IBM', 'value': {'rev': '1-abc'}}]}))
+    objectSet(fetchData, testCouchURL + '/stock%3AIBM?rev=1-abc', '{"ok": true}')
+    testMockAll({'systemFetch': fetchData})
+    unittestDeepEqual(testAction('POST', '/deleteStock', '', {'symbol': 'ibm'}), ['200 OK', {}])
+    unittestDeepEqual(unittestMockEnd(), [ \
+        testCouchCall('/_all_docs', {'keys': ['stock:IBM']}), \
+        testCouchCall('/stock%3AIBM?rev=1-abc', null, 'DELETE') \
+    ])
+endfunction
+unittestRunTest('testDeleteStock')
+
+
+async function testDeleteStock_unknown():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_all_docs', jsonStringify({'rows': [{'key': 'stock:XYZ', 'error': 'not_found'}]}))})
+    unittestDeepEqual( \
+        testAction('POST', '/deleteStock', '', {'symbol': 'XYZ'}), \
+        ['404 Not Found', {'error': 'UnknownStock', 'message': 'Unknown stock "XYZ"'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testDeleteStock_unknown')
+
+
+async function testDeleteStock_revsError():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('POST', '/deleteStock', '', {'symbol': 'IBM'}), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testDeleteStock_revsError')
+
+
+async function testDeleteStock_deleteError():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_all_docs', jsonStringify({'rows': [{'id': 'stock:IBM', 'value': {'rev': '1-abc'}}]}))})
+    unittestDeepEqual( \
+        testAction('POST', '/deleteStock', '', {'symbol': 'IBM'}), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 2)
+endfunction
+unittestRunTest('testDeleteStock_deleteError')
+
+
+#
+# getRuns tests
+#
+
+
+async function testGetRuns():
+    run1 = { \
+        '_id': 'run1', 'name': 'Run 1', 'created': '2026-10-01T09:00:00-07:00', 'symbols': ['A', 'B'], \
+        'endMonth': '2026-06', 'months': 36, 'horizon': 3, 'targets': [10] \
+    }
+    run2 = objectAssign(objectCopy(run1), {'_id': 'run2', 'name': 'Run 2', 'created': '2026-10-01T12:00:00-04:00'})
+    run3 = objectAssign(objectCopy(run1), {'_id': 'run3', 'name': 'Run 3', 'created': '2026-10-01T08:00:00-07:00'})
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': [run3, run1, run2]}))})
+    info1 = objectAssign({'id': 'run1'}, run1)
+    objectDelete(info1, '_id')
+    info2 = objectAssign(objectCopy(info1), {'id': 'run2', 'name': 'Run 2', 'created': '2026-10-01T12:00:00-04:00'})
+    info3 = objectAssign(objectCopy(info1), {'id': 'run3', 'name': 'Run 3', 'created': '2026-10-01T08:00:00-07:00'})
+    unittestDeepEqual(testAction('GET', '/getRuns', '', null), ['200 OK', {'runs': [info1, info2, info3]}])
+    unittestDeepEqual(unittestMockEnd(), [ \
+        testCouchCall('/_find', {'selector': {'type': 'run'}, 'fields': markowitzRunInfoFields, 'limit': 100000}) \
+    ])
+endfunction
+unittestRunTest('testGetRuns')
+
+
+async function testGetRuns_databaseError():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('GET', '/getRuns', '', null), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testGetRuns_databaseError')
+
+
+#
+# getRun tests
+#
+
+
+async function testGetRun():
+    stocks = [ \
+        {'symbol': 'A', 'expectedReturn': 12, 'variance': 20, 'realizedReturn': 8}, \
+        {'symbol': 'B', 'expectedReturn': 6, 'variance': 10} \
+    ]
+    portfolios = [ \
+        { \
+            'target': 10, 'solved': true, 'allocations': [{'symbol': 'A', 'weight': 0.6}, {'symbol': 'B', 'weight': 0.4}], \
+            'deleted': [], 'variance': 9, 'realizedReturn': 5 \
+        }, \
+        {'target': 20, 'solved': false, 'allocations': [], 'deleted': ['B']} \
+    ]
+    doc = { \
+        '_id': 'run1', '_rev': '1-abc', 'type': 'run', 'name': 'Run 1', 'created': testNowISO, 'symbols': ['A', 'B'], \
+        'endMonth': '2026-06', 'months': 36, 'horizon': 3, 'targets': [10, 20], 'stocks': stocks, 'portfolios': portfolios \
+    }
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/run1', jsonStringify(doc))})
+    unittestDeepEqual(testAction('GET', '/getRun', 'id=run1', null), ['200 OK', {'run': { \
+        'id': 'run1', 'name': 'Run 1', 'created': testNowISO, 'symbols': ['A', 'B'], 'endMonth': '2026-06', \
+        'months': 36, 'horizon': 3, 'targets': [10, 20], 'stocks': stocks, 'portfolios': portfolios \
+    }}])
+    unittestDeepEqual(unittestMockEnd(), [testCouchCall('/run1')])
+endfunction
+unittestRunTest('testGetRun')
+
+
+async function testGetRun_unknown():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('GET', '/getRun', 'id=run1', null), \
+        ['404 Not Found', {'error': 'UnknownRun', 'message': 'Unknown run "run1"'}] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [testCouchCall('/run1')])
+endfunction
+unittestRunTest('testGetRun_unknown')
+
+
+async function testGetRun_notRun():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/stock%3AIBM', jsonStringify({'_id': 'stock:IBM', 'type': 'stock'}))})
+    unittestDeepEqual( \
+        testAction('GET', '/getRun', 'id=stock:IBM', null), \
+        ['404 Not Found', {'error': 'UnknownRun', 'message': 'Unknown run "stock:IBM"'}] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [testCouchCall('/stock%3AIBM')])
+endfunction
+unittestRunTest('testGetRun_notRun')
+
+
+#
+# createRun tests
+#
+
+
+async function testCreateRun():
+    fetchData = {}
+    objectSet(fetchData, testCouchURL + '/_find', jsonStringify({'docs': testStockDocs()}))
+    objectSet(fetchData, testCouchURL, jsonStringify({'ok': true, 'id': 'run1', 'rev': '1-abc'}))
+    testMockAll({'systemFetch': fetchData})
+    request = {'name': 'Test Run', 'symbols': ['d', 'C', 'b', 'A', 'a'], 'endMonth': '2023-01', 'targets': testTargets}
+    unittestDeepEqual(testAction('POST', '/createRun', '', request), ['200 OK', {'id': 'run1'}])
+    calls = unittestMockEnd()
+    unittestEqual(arrayLength(calls), 2)
+    unittestDeepEqual(arrayGet(calls, 0), testCouchCall('/_find', { \
+        'selector': {'type': 'stock', 'symbol': {'$in': testSymbols}}, \
+        'fields': ['symbol', 'lastMonth', 'prices'], \
+        'limit': 100000 \
+    }))
+
+    # The run document - the statistics and portfolios match the original program's
+    postRequest = arrayGet(arrayGet(arrayGet(calls, 1), 1), 0)
+    unittestEqual(objectGet(postRequest, 'url'), testCouchURL)
+    unittestDeepEqual(objectGet(postRequest, 'headers'), testCouchHeaders)
+    unittestDeepEqual(testRound(jsonParse(objectGet(postRequest, 'body'))), testRound({ \
+        'type': 'run', \
+        'name': 'Test Run', \
+        'created': testNowISO, \
+        'symbols': testSymbols, \
+        'endMonth': '2023-01', \
+        'months': 36, \
+        'horizon': 3, \
+        'targets': testTargets, \
+        'stocks': testRunStocks, \
+        'portfolios': testRunPortfolios \
+    }))
+endfunction
+unittestRunTest('testCreateRun')
+
+
+async function testCreateRun_defaultEndMonth():
+    fetchData = {}
+    objectSet(fetchData, testCouchURL + '/_find', jsonStringify({'docs': testStockDocs()}))
+    objectSet(fetchData, testCouchURL, jsonStringify({'ok': true, 'id': 'run2', 'rev': '1-abc'}))
+    testMockAll({'systemFetch': fetchData})
+    request = {'name': 'Test Run', 'symbols': testSymbols, 'months': 24, 'horizon': 1, 'targets': [20]}
+    unittestDeepEqual(testAction('POST', '/createRun', '', request), ['200 OK', {'id': 'run2'}])
+    run = jsonParse(objectGet(arrayGet(arrayGet(arrayGet(unittestMockEnd(), 1), 1), 0), 'body'))
+
+    # The projection months have not passed - there are no realized returns
+    unittestEqual(objectGet(run, 'endMonth'), '2023-04')
+    unittestEqual(objectGet(run, 'months'), 24)
+    unittestEqual(objectGet(run, 'horizon'), 1)
+    for stock in objectGet(run, 'stocks'):
+        unittestEqual(objectHas(stock, 'realizedReturn'), false)
+    endfor
+    portfolio = arrayGet(objectGet(run, 'portfolios'), 0)
+    unittestEqual(objectGet(portfolio, 'solved'), true)
+    unittestEqual(objectHas(portfolio, 'realizedReturn'), false)
+endfunction
+unittestRunTest('testCreateRun_defaultEndMonth')
+
+
+async function testCreateRun_invalidMonth():
+    for endMonth in ['2023-13', 'January']:
+        testMockAll({})
+        request = {'name': 'Test Run', 'symbols': testSymbols, 'endMonth': endMonth, 'targets': [10]}
+        unittestDeepEqual( \
+            testAction('POST', '/createRun', '', request), \
+            ['400 Bad Request', {'error': 'InvalidMonth', 'message': 'Invalid end month "' + endMonth + '" - use "YYYY-MM"'}] \
+        )
+        unittestDeepEqual(unittestMockEnd(), [])
+    endfor
+endfunction
+unittestRunTest('testCreateRun_invalidMonth')
+
+
+async function testCreateRun_tooManyStocks():
+    testMockAll({})
+    request = {'name': 'Test Run', 'symbols': ['A', 'B', 'C', 'D', 'E', 'F', 'G'], 'months': 6, 'targets': [10]}
+    unittestDeepEqual( \
+        testAction('POST', '/createRun', '', request), \
+        ['400 Bad Request', {'error': 'TooManyStocks', 'message': 'There are more stocks (7) than months (6)'}] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [])
+endfunction
+unittestRunTest('testCreateRun_tooManyStocks')
+
+
+async function testCreateRun_unknownStock():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': arraySlice(testStockDocs(), 1, 3)}))})
+    request = {'name': 'Test Run', 'symbols': testSymbols, 'targets': [10]}
+    unittestDeepEqual( \
+        testAction('POST', '/createRun', '', request), \
+        ['404 Not Found', {'error': 'UnknownStock', 'message': 'Unknown stocks: A, D'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testCreateRun_unknownStock')
+
+
+async function testCreateRun_missingData():
+    docs = testStockDocs()
+    objectDelete(objectGet(arrayGet(docs, 2), 'prices'), '2021-06')
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': docs}))})
+    request = {'name': 'Test Run', 'symbols': testSymbols, 'targets': [10]}
+    unittestDeepEqual( \
+        testAction('POST', '/createRun', '', request), \
+        ['400 Bad Request', { \
+            'error': 'MissingData', \
+            'message': 'Stocks without a price for every month from 2020-04 to 2023-04: C' \
+        }] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testCreateRun_missingData')
+
+
+async function testCreateRun_findError():
+    testMockAll({})
+    request = {'name': 'Test Run', 'symbols': testSymbols, 'targets': [10]}
+    unittestDeepEqual( \
+        testAction('POST', '/createRun', '', request), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testCreateRun_findError')
+
+
+async function testCreateRun_saveError():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': testStockDocs()}))})
+    request = {'name': 'Test Run', 'symbols': testSymbols, 'targets': [10]}
+    unittestDeepEqual( \
+        testAction('POST', '/createRun', '', request), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 2)
+endfunction
+unittestRunTest('testCreateRun_saveError')
+
+
+async function testCreateRun_tooManySymbols():
+    symbols = []
+    while arrayLength(symbols) < 101:
+        arrayPush(symbols, 'S' + arrayLength(symbols))
+    endwhile
+    testMockAll({})
+    request = {'name': 'Test Run', 'symbols': symbols, 'months': 120, 'targets': [10]}
+    response = testAction('POST', '/createRun', '', request)
+    unittestEqual(arrayGet(response, 0), '400 Bad Request')
+    unittestEqual(objectGet(arrayGet(response, 1), 'member'), 'symbols')
+    unittestEqual(stringEndsWith(objectGet(arrayGet(response, 1), 'message'), '[len <= 100] (content)'), true)
+    unittestDeepEqual(unittestMockEnd(), [])
+endfunction
+unittestRunTest('testCreateRun_tooManySymbols')
+
+
+async function testCreateRun_invalidInput():
+    testMockAll({})
+    request = {'name': 'Test Run', 'symbols': ['A'], 'targets': [10]}
+    unittestDeepEqual( \
+        testAction('POST', '/createRun', '', request), \
+        ['400 Bad Request', { \
+            'error': 'InvalidInput', \
+            'member': 'symbols', \
+            'message': 'Invalid value ["A"] (type "array") for member "symbols", expected type "array" [len >= 2] (content)' \
+        }] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [])
+endfunction
+unittestRunTest('testCreateRun_invalidInput')
+
+
+#
+# deleteRun tests
+#
+
+
+async function testDeleteRun():
+    fetchData = {}
+    objectSet(fetchData, testCouchURL + '/run1', jsonStringify({'_id': 'run1', '_rev': '1-abc', 'type': 'run'}))
+    objectSet(fetchData, testCouchURL + '/run1?rev=1-abc', '{"ok": true}')
+    testMockAll({'systemFetch': fetchData})
+    unittestDeepEqual(testAction('POST', '/deleteRun', '', {'id': 'run1'}), ['200 OK', {}])
+    unittestDeepEqual(unittestMockEnd(), [ \
+        testCouchCall('/run1'), \
+        testCouchCall('/run1?rev=1-abc', null, 'DELETE') \
+    ])
+endfunction
+unittestRunTest('testDeleteRun')
+
+
+async function testDeleteRun_unknown():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/stock%3AIBM', jsonStringify({'_id': 'stock:IBM', 'type': 'stock'}))})
+    unittestDeepEqual( \
+        testAction('POST', '/deleteRun', '', {'id': 'stock:IBM'}), \
+        ['404 Not Found', {'error': 'UnknownRun', 'message': 'Unknown run "stock:IBM"'}] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [testCouchCall('/stock%3AIBM')])
+endfunction
+unittestRunTest('testDeleteRun_unknown')
+
+
+async function testDeleteRun_deleteError():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/run1', jsonStringify({'_id': 'run1', '_rev': '1-abc', 'type': 'run'}))})
+    unittestDeepEqual( \
+        testAction('POST', '/deleteRun', '', {'id': 'run1'}), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 2)
+endfunction
+unittestRunTest('testDeleteRun_deleteError')
+
+
+#
+# Month tests
+#
+
+
+function testMarkowitzMonthIndex():
+    unittestEqual(markowitzMonthIndex('1967-09'), 1967 * 12 + 8)
+    unittestEqual(markowitzMonthIndex('2023-12'), 2023 * 12 + 11)
+    unittestEqual(markowitzMonthIndex('2023-00'), null)
+    unittestEqual(markowitzMonthIndex('2023-13'), null)
+    unittestEqual(markowitzMonthIndex('2023-1'), null)
+    unittestEqual(markowitzMonthIndex('Sept 1967'), null)
+endfunction
+unittestRunTest('testMarkowitzMonthIndex')
+
+
+function testMarkowitzMonthString():
+    unittestEqual(markowitzMonthString(1967 * 12 + 8), '1967-09')
+    unittestEqual(markowitzMonthString(2023 * 12 + 9), '2023-10')
+    unittestEqual(markowitzMonthString(2023 * 12 + 11), '2023-12')
+    unittestEqual(markowitzMonthString(2024 * 12), '2024-01')
+endfunction
+unittestRunTest('testMarkowitzMonthString')
+
+
+function testMarkowitzTimestampMonth():
+    unittestEqual(markowitzTimestampMonth(0), '1970-01')
+    unittestEqual(markowitzTimestampMonth(-1), '1969-12')
+    unittestEqual(markowitzTimestampMonth(-2208988800), '1900-01')
+    unittestEqual(markowitzTimestampMonth(-73526400), '1967-09')
+    unittestEqual(markowitzTimestampMonth(951782399), '2000-02')
+    unittestEqual(markowitzTimestampMonth(951868799), '2000-02')
+    unittestEqual(markowitzTimestampMonth(951868800), '2000-03')
+    unittestEqual(markowitzTimestampMonth(1790827200 - 14400), '2026-10')
+    unittestEqual(markowitzTimestampMonth(1790827200 - 14401), '2026-09')
+endfunction
+unittestRunTest('testMarkowitzTimestampMonth')
+
+
+#
+# Stock price tests
+#
+
+
+function testMarkowitzParseYahoo():
+    unittestDeepEqual(markowitzParseYahoo(testYahooResponse({'longName': 'Test Corporation', 'currency': 'USD'})), { \
+        'name': 'Test Corporation', \
+        'currency': 'USD', \
+        'firstMonth': '2026-07', \
+        'lastMonth': '2026-09', \
+        'monthCount': 3, \
+        'prices': {'2026-07': 9, '2026-08': 10, '2026-09': 12} \
+    })
+endfunction
+unittestRunTest('testMarkowitzParseYahoo')
+
+
+function testMarkowitzParseYahoo_failure():
+    unittestEqual(markowitzParseYahoo(null), null)
+    unittestEqual(markowitzParseYahoo('{}'), null)
+    unittestEqual(markowitzParseYahoo('{"chart": {"result": null, "error": {"code": "Not Found"}}}'), null)
+    unittestEqual(markowitzParseYahoo('{"chart": {"result": []}}'), null)
+
+    # No adjusted prices
+    unittestEqual(markowitzParseYahoo('{"chart": {"result": [{"timestamp": [0], "indicators": {}}]}}'), null)
+
+    # Only the current month
+    unittestEqual(markowitzParseYahoo('{"chart": {"result": [{"timestamp": [0], "indicators": {"adjclose": [{"adjclose": [1]}]}}]}}'), null)
+endfunction
+unittestRunTest('testMarkowitzParseYahoo_failure')
+
+
+function testMarkowitzRelatives():
+    prices = {'2023-01': 100, '2023-02': 110, '2023-03': 99, '2023-05': 120}
+    unittestDeepEqual(markowitzRelatives(prices, markowitzMonthIndex('2023-01'), 2), [1.1, 0.9])
+    unittestDeepEqual(markowitzRelatives(prices, markowitzMonthIndex('2023-03'), 0), [])
+    unittestEqual(markowitzRelatives(prices, markowitzMonthIndex('2023-01'), 4), null)
+    unittestEqual(markowitzRelatives(prices, markowitzMonthIndex('2022-12'), 2), null)
+endfunction
+unittestRunTest('testMarkowitzRelatives')
+
+
+#
+# Analysis tests
+#
+
+
+function testMarkowitzAnalyze():
+    relatives = []
+    horizonRelatives = []
+    for stockRelatives in testRelatives:
+        arrayPush(relatives, arraySlice(stockRelatives, 0, 36))
+        arrayPush(horizonRelatives, arraySlice(stockRelatives, 36))
+    endfor
+    unittestDeepEqual( \
+        testRound(markowitzAnalyze(testSymbols, relatives, horizonRelatives, 3, testTargets)), \
+        testRound({'stocks': testRunStocks, 'portfolios': testRunPortfolios}) \
+    )
+endfunction
+unittestRunTest('testMarkowitzAnalyze')
+
+
+function testMarkowitzAnalyze_noHorizon():
+    relatives = []
+    for stockRelatives in arraySlice(testRelatives, 0, 3):
+        arrayPush(relatives, arraySlice(stockRelatives, 0, 36))
+    endfor
+    analysis = markowitzAnalyze(['A', 'B', 'C'], relatives, [[1.1], null, [1.0]], 1, [10])
+    stocks = objectGet(analysis, 'stocks')
+    unittestEqual(objectHas(arrayGet(stocks, 0), 'realizedReturn'), true)
+    unittestEqual(objectHas(arrayGet(stocks, 1), 'realizedReturn'), false)
+    portfolio = arrayGet(objectGet(analysis, 'portfolios'), 0)
+    unittestEqual(objectGet(portfolio, 'solved'), true)
+    unittestEqual(objectHas(portfolio, 'realizedReturn'), false)
+endfunction
+unittestRunTest('testMarkowitzAnalyze_noHorizon')
+
+
+function testMarkowitzAnnualReturn():
+    unittestEqual(markowitzAnnualReturn(1, 12), 0)
+    unittestEqual(mathRound(markowitzAnnualReturn(1.01, 12) * 1e6) / 1e6, 12.682503)
+    unittestEqual(mathRound(markowitzAnnualReturn(1.1, 4) * 1e6) / 1e6, 46.41)
+endfunction
+unittestRunTest('testMarkowitzAnnualReturn')
+
+
+function testMarkowitzSolve():
+    # 2x + y = 5, x + 3y = 10 - the second row pivots
+    unittestDeepEqual(testRound(markowitzSolve([[2, 1, 5], [1, 3, 10]])), [1, 3])
+
+    # The first column's pivot is in the last row
+    unittestDeepEqual(testRound(markowitzSolve([[0, 1, 2], [1, 0, 3]])), [3, 2])
+endfunction
+unittestRunTest('testMarkowitzSolve')
+
+
+function testMarkowitzSolve_singular():
+    unittestEqual(markowitzSolve([[1, 2, 3], [2, 4, 6]]), null)
+endfunction
+unittestRunTest('testMarkowitzSolve_singular')
+
+
+function testMarkowitzSystem():
+    covariance = [[4, 1, 2], [1, 9, 3], [2, 3, 16]]
+    unittestDeepEqual(markowitzSystem(covariance, [1, 2, 3], [0, 2], 1.5), [ \
+        [4, 2, 1, 1, 0], \
+        [2, 16, 3, 1, 0], \
+        [1, 3, 0, 0, 1.5], \
+        [1, 1, 0, 0, 1] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzSystem')

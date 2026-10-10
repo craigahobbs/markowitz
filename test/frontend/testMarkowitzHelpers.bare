@@ -1,0 +1,44 @@
+include <unittest.bare>
+include <unittestMock.bare>
+
+
+# Find the click callback of the control with the text
+function testFindClick(model, text):
+    type = systemType(model)
+    if type == 'array':
+        for item in model:
+            found = testFindClick(item, text)
+            if found != null:
+                return found
+            endif
+        endfor
+    elif type == 'object':
+        elem = objectGet(model, 'elem')
+        callback = objectGet(model, 'callback')
+        if callback != null && systemType(elem) == 'object' && objectGet(elem, 'text') == text:
+            return objectGet(callback, 'click')
+        endif
+        return testFindClick(elem, text)
+    endif
+    return null
+endfunction
+
+
+# Test that two functions have the same side effects
+async function testSameEffect(actualFn, expectedFn, data):
+    unittestMockAll(data)
+    expectedFn()
+    expected = unittestMockEnd()
+    unittestMockAll(data)
+    actualFn()
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+
+
+# Test that a rendered control's click callback has the same side effects as the expected function
+async function testVerifyClick(renderFn, text, expectedFn, data):
+    unittestMockAll(data)
+    renderFn()
+    found = testFindClick(unittestMockEnd(), text)
+    testSameEffect(found, expectedFn, data)
+endfunction

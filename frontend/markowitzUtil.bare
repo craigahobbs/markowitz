@@ -1,0 +1,41 @@
+# Utilities shared by the backend and frontend
+
+
+# Normalize stock symbols - uppercase, unique, and sorted
+function markowitzSymbols(symbols):
+    unique = {}
+    for symbol in symbols:
+        objectSet(unique, stringUpper(symbol), true)
+    endfor
+    return arraySort(objectKeys(unique))
+endfunction
+
+
+#
+# Months - a month string is "YYYY-MM" and a month index is the number of months since year zero
+#
+
+
+markowitzRegexMonth = regexNew('^(?<year>\\d{4})-(?<month>\\d{2})$')
+
+
+# Parse a month string to a month index - null if invalid
+function markowitzMonthIndex(month):
+    matchMonth = regexMatch(markowitzRegexMonth, month)
+    if matchMonth == null:
+        return null
+    endif
+    groups = objectGet(matchMonth, 'groups')
+    monthNumber = numberParseInt(objectGet(groups, 'month'))
+    if monthNumber < 1 || monthNumber > 12:
+        return null
+    endif
+    return numberParseInt(objectGet(groups, 'year')) * 12 + monthNumber - 1
+endfunction
+
+
+# Format a month index as a month string
+function markowitzMonthString(monthIndex):
+    monthNumber = monthIndex % 12 + 1
+    return mathFloor(monthIndex / 12) + '-' + if(monthNumber < 10, '0', '') + monthNumber
+endfunction

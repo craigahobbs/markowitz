@@ -16,6 +16,11 @@ API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
   called from `frontend/markowitz.md`
 - `frontend/markowitzTypes.bare` - the API's Schema Markdown types, `markowitzTypes`, shared by the backend and
   frontend
+- `frontend/markowitzUtil.bare` - the month and stock symbol helpers, shared by the backend and frontend
+- Persistence is CouchDB - one database (default `http://127.0.0.1:5984/markowitz`) of `stock` and `run` documents.
+  `wsgi.py` reads the `MARKOWITZ_COUCH_URL` and `MARKOWITZ_COUCH_CREDENTIALS` ("user:password") environment
+  variables. Stock prices are downloaded from Yahoo Finance's chart API by the `updateStocks` action.
+- `original/` - the 1967 Fortran program scans that the backend's analysis (`markowitzAnalyze`) ports
 - `wsgi.py` - the WSGI application, which `make run` serves with waitress (named `wsgi`, not `markowitz`, so it
   can't collide with a Python module of the same name). It reads the application
   source once, at startup - restart the server after editing - and passes the backend the `markowitzStatics`

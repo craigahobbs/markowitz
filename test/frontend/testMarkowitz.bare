@@ -1,11 +1,977 @@
+include <args.bare>
+include <dataLineChart.bare>
+include <forms.bare>
 include <unittest.bare>
 include <unittestMock.bare>
 include '../../frontend/markowitz.bare'
+include 'testMarkowitzHelpers.bare'
+
+
+# The menu line
+testMenu = "[Runs](#var=) | [New Run](#var.vPage='new') | [Stocks](#var.vPage='stocks') | [API Documentation](doc/)"
+
+# A local time, and its display text
+testCreated = datetimeISOFormat(datetimeNew(2026, 10, 10, 12, 30))
+testCreatedText = '2026-10-10 12:30'
+
+# The test stocks
+testStocks = [ \
+    { \
+        'symbol': 'IBM', 'name': 'International Business Machines', 'currency': 'USD', 'firstMonth': '1962-01', \
+        'lastMonth': '2026-09', 'monthCount': 777, 'updated': testCreated \
+    }, \
+    {'symbol': 'KO', 'firstMonth': '1985-01', 'lastMonth': '2026-09', 'monthCount': 501, 'updated': testCreated} \
+]
+testStocksTable = [ \
+    '| Stock                                       | Name                            | First Month | Last Month | Months | Updated          |', \
+    '|---------------------------------------------|---------------------------------|-------------|------------|-------:|------------------|', \
+    '| [IBM](#var.vPage=\'stock\'&var.vSymbol=\'IBM\') | International Business Machines | 1962-01     | 2026-09    |    777 | 2026-10-10 12:30 |', \
+    '| [KO](#var.vPage=\'stock\'&var.vSymbol=\'KO\')   |                                 | 1985-01     | 2026-09    |    501 | 2026-10-10 12:30 |' \
+]
+
+# The test run
+testRun = { \
+    'id': 'r1', \
+    'name': 'Blue <Chips>', \
+    'created': testCreated, \
+    'symbols': ['A', 'B', 'C', 'D'], \
+    'endMonth': '2023-01', \
+    'months': 36, \
+    'horizon': 3, \
+    'targets': [6.17, 19.56, 151.8], \
+    'stocks': [ \
+        {'symbol': 'A', 'expectedReturn': 31.24, 'variance': 23.04, 'realizedReturn': 35.9}, \
+        {'symbol': 'B', 'expectedReturn': -19.9, 'variance': 30.25, 'realizedReturn': 77.9}, \
+        {'symbol': 'C', 'expectedReturn': 11.6, 'variance': 24.01}, \
+        {'symbol': 'D', 'expectedReturn': -23, 'variance': 30.25, 'realizedReturn': 118.5} \
+    ], \
+    'portfolios': [ \
+        { \
+            'target': 6.17, 'solved': true, \
+            'allocations': [ \
+                {'symbol': 'A', 'weight': 0.3959}, {'symbol': 'B', 'weight': 0.2288}, \
+                {'symbol': 'C', 'weight': 0.2674}, {'symbol': 'D', 'weight': 0.1079} \
+            ], \
+            'deleted': [], 'variance': 6.25, 'realizedReturn': 67.9 \
+        }, \
+        { \
+            'target': 19.56, 'solved': true, \
+            'allocations': [{'symbol': 'A', 'weight': 0.5567}, {'symbol': 'B', 'weight': 0.0664}, {'symbol': 'C', 'weight': 0.3769}], \
+            'deleted': ['D'], 'variance': 9 \
+        }, \
+        {'target': 151.8, 'solved': false, 'allocations': [], 'deleted': ['D', 'B', 'C']} \
+    ] \
+}
+
+
+# The page header calls
+function testHeaderCalls(title, titleMarkdown):
+    return [ \
+        ['documentSetTitle', [title]], \
+        ['markdownPrint', ['# ' + titleMarkdown, '', testMenu, '']] \
+    ]
+endfunction
+
+
+# A new run form field render call
+function testFormFieldCall(name, label, size, value):
+    inputID = 'markowitz-' + name
+    return ['elementModelRender', [{'html': 'p', 'elem': [ \
+        {'html': 'label', 'attr': {'for': inputID}, 'elem': {'html': 'b', 'elem': {'text': label}}}, \
+        {'html': 'br'}, \
+        formsTextElements(inputID, value, size) \
+    ]}]]
+endfunction
+
+
+# The new run form render calls
+function testFormCalls(form):
+    return [ \
+        testFormFieldCall('name', 'Name', 40, objectGet(form, 'name')), \
+        testFormFieldCall('symbols', 'Stock symbols, separated by spaces or commas', 60, objectGet(form, 'symbols')), \
+        testFormFieldCall('endMonth', 'End month of the analysis period, "YYYY-MM" (blank for the latest)', 10, objectGet(form, 'endMonth')), \
+        testFormFieldCall('months', 'Months in the analysis period', 5, objectGet(form, 'months')), \
+        testFormFieldCall('horizon', 'Months in the projection', 5, objectGet(form, 'horizon')), \
+        testFormFieldCall('targets', 'Target annual returns, in percent, separated by spaces or commas', 40, objectGet(form, 'targets')), \
+        ['elementModelRender', [{'html': 'p', 'elem': formsLinkButtonElements('Start Run', '<function>')}]] \
+    ]
+endfunction
+
+
+# The new run form's input values mock data
+function testFormInputs(form):
+    inputs = {}
+    for name in objectKeys(form):
+        objectSet(inputs, 'markowitz-' + name, objectGet(form, name))
+    endfor
+    return inputs
+endfunction
+
+
+# The new run form's input value calls
+testFormInputCalls = [ \
+    ['documentInputValue', ['markowitz-name']], \
+    ['documentInputValue', ['markowitz-symbols']], \
+    ['documentInputValue', ['markowitz-endMonth']], \
+    ['documentInputValue', ['markowitz-months']], \
+    ['documentInputValue', ['markowitz-horizon']], \
+    ['documentInputValue', ['markowitz-targets']] \
+]
+
+
+# A valid new run form
+testForm = {'name': ' My Run ', 'symbols': 'ko, ibm', 'endMonth': '', 'months': '36', 'horizon': '3', 'targets': '10 20'}
+testRequest = {'name': 'My Run', 'symbols': ['IBM', 'KO'], 'months': 36, 'horizon': 3, 'targets': [10, 20]}
+
+
+# Concatenate two arrays
+function testArrayConcat(array1, array2):
+    result = arrayCopy(array1)
+    arrayExtend(result, array2)
+    return result
+endfunction
+
+
+# Get a page's call log - for comparing a handler's re-render
+async function testPageCalls(pageFn, data):
+    unittestMockAll(data)
+    pageFn()
+    return unittestMockEnd()
+endfunction
+
+
+#
+# Main tests
+#
 
 
 async function testMarkowitzMain():
-    unittestMockAll()
-    markowitzMain()
-    unittestEqual(arrayLength(unittestMockEnd()) > 0, true)
+    data = {'systemFetch': {'getRuns': jsonStringify({'runs': []})}}
+    testSameEffect(markowitzMain, markowitzRunsPage, data)
 endfunction
 unittestRunTest('testMarkowitzMain')
+
+
+async function testMarkowitzMain_run():
+    systemGlobalSet('vPage', 'run')
+    systemGlobalSet('vId', 'r1')
+    data = {'systemFetch': {'getRun?id=r1': jsonStringify({'run': testRun})}}
+    testSameEffect(markowitzMain, systemPartial(markowitzRunPage, {'page': 'run', 'id': 'r1'}), data)
+    systemGlobalSet('vPage', null)
+    systemGlobalSet('vId', null)
+endfunction
+unittestRunTest('testMarkowitzMain_run')
+
+
+async function testMarkowitzMain_new():
+    systemGlobalSet('vPage', 'new')
+    data = {'systemFetch': {'getStocks': jsonStringify({'stocks': testStocks})}}
+    testSameEffect(markowitzMain, systemPartial(markowitzNewRunPage, {'page': 'new'}), data)
+    systemGlobalSet('vPage', null)
+endfunction
+unittestRunTest('testMarkowitzMain_new')
+
+
+async function testMarkowitzMain_stocks():
+    systemGlobalSet('vPage', 'stocks')
+    data = {'systemFetch': {'getStocks': jsonStringify({'stocks': testStocks})}}
+    testSameEffect(markowitzMain, systemPartial(markowitzStocksPage, {'page': 'stocks'}), data)
+    systemGlobalSet('vPage', null)
+endfunction
+unittestRunTest('testMarkowitzMain_stocks')
+
+
+async function testMarkowitzMain_stock():
+    systemGlobalSet('vPage', 'stock')
+    systemGlobalSet('vSymbol', 'IBM')
+    data = {'systemFetch': {'getStock?symbol=IBM': jsonStringify({'stock': arrayGet(testStocks, 0), 'prices': {'2026-07': 9}})}}
+    testSameEffect(markowitzMain, systemPartial(markowitzStockPage, {'page': 'stock', 'symbol': 'IBM'}), data)
+    systemGlobalSet('vPage', null)
+    systemGlobalSet('vSymbol', null)
+endfunction
+unittestRunTest('testMarkowitzMain_stock')
+
+
+#
+# Runs page tests
+#
+
+
+async function testMarkowitzRunsPage():
+    unittestMockAll({'systemFetch': {'getRuns': jsonStringify({'runs': [testRun]})}})
+    markowitzRunsPage()
+    expected = testHeaderCalls('Markowitz', 'Markowitz')
+    arrayPush(expected, \
+        ['systemFetch', ['getRuns']], \
+        ['markdownPrint', [[ \
+            '| Run                                             | Created          | Stocks | Analysis Period      | Targets                |', \
+            '|-------------------------------------------------|------------------|-------:|----------------------|------------------------|', \
+            "| [Blue \\<Chips\\>](#var.vId='r1'&var.vPage='run') | 2026-10-10 12:30 |      4 | 36 months to 2023-01 | 6.17%, 19.56%, 151.80% |" \
+        ]]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzRunsPage')
+
+
+async function testMarkowitzRunsPage_empty():
+    unittestMockAll({'systemFetch': {'getRuns': jsonStringify({'runs': []})}})
+    markowitzRunsPage()
+    expected = testHeaderCalls('Markowitz', 'Markowitz')
+    arrayPush(expected, \
+        ['systemFetch', ['getRuns']], \
+        ['markdownPrint', ["There are no runs. [Start a run](#var.vPage='new')."]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzRunsPage_empty')
+
+
+async function testMarkowitzRunsPage_error():
+    unittestMockAll({})
+    markowitzRunsPage()
+    expected = testHeaderCalls('Markowitz', 'Markowitz')
+    arrayPush(expected, ['systemFetch', ['getRuns']], ['markdownPrint', ['**Error:** The runs could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzRunsPage_error')
+
+
+#
+# Run page tests
+#
+
+
+async function testMarkowitzRunPage():
+    args = {'page': 'run', 'id': 'r1'}
+    unittestMockAll({'systemFetch': {'getRun?id=r1': jsonStringify({'run': testRun})}})
+    markowitzRunPage(args)
+    expected = [['systemFetch', ['getRun?id=r1']]]
+    arrayExtend(expected, testHeaderCalls('Blue <Chips>', 'Blue \\<Chips\\>'))
+    arrayPush(expected, \
+        ['markdownPrint', [ \
+            '- **Stocks:** A, B, C, D', \
+            '- **Analysis period:** 36 months to 2023-01', \
+            '- **Projection:** 3 months', \
+            '- **Created:** 2026-10-10 12:30', \
+            '' \
+        ]], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            formsLinkElements('Run Again', "#var.vId='r1'&var.vPage='new'"), \
+            {'text': ' | '}, \
+            formsLinkButtonElements('Delete', '<function>') \
+        ]}]], \
+        ['markdownPrint', [ \
+            '## Portfolios', \
+            '', \
+            'The minimum-risk portfolio for each target return. Stocks with negative allocations are deleted from the', \
+            'portfolio, one at a time, most negative first. Returns are annualized. Risk is the standard deviation of the', \
+            'portfolio\'s monthly returns about their trend.', \
+            '' \
+        ]], \
+        ['markdownPrint', [[ \
+            '| Target Return | Realized Return |        Risk | Stocks | Deleted |', \
+            '|--------------:|----------------:|------------:|-------:|---------|', \
+            '|         6.17% |          67.90% |       2.50% |      4 |         |', \
+            '|        19.56% |                 |       3.00% |      3 | D       |', \
+            '|       151.80% |                 | No solution |      0 | D, B, C |' \
+        ]]], \
+        ['markdownPrint', ['', '## Efficient Frontier', '']], \
+        ['elementModelRender', [{'html': 'p', 'elem': dataLineChartElements( \
+            [{'Risk (%)': 2.5, 'Target Return (%)': 6.17}, {'Risk (%)': 3, 'Target Return (%)': 19.56}], \
+            {'x': 'Target Return (%)', 'y': ['Risk (%)']} \
+        )}]], \
+        ['markdownPrint', [ \
+            '', \
+            '## Allocations', \
+            '', \
+            'The percent of each target return\'s portfolio to invest in each stock.', \
+            '' \
+        ]], \
+        ['markdownPrint', [[ \
+            '| Stock                                   |  6.17% | 19.56% | 151.80% |', \
+            '|-----------------------------------------|-------:|-------:|--------:|', \
+            "| [A](#var.vPage='stock'&var.vSymbol='A') | 39.59% | 55.67% |         |", \
+            "| [B](#var.vPage='stock'&var.vSymbol='B') | 22.88% |  6.64% |         |", \
+            "| [C](#var.vPage='stock'&var.vSymbol='C') | 26.74% | 37.69% |         |", \
+            "| [D](#var.vPage='stock'&var.vSymbol='D') | 10.79% |        |         |" \
+        ]]], \
+        ['markdownPrint', [ \
+            '', \
+            '## Stocks', \
+            '', \
+            'Each stock\'s monthly returns are fit to a trend line. The projected return is the trend\'s return at the', \
+            'end of the projection, and the risk is the standard deviation of the monthly returns about the trend.', \
+            '' \
+        ]], \
+        ['markdownPrint', [[ \
+            '| Stock                                   | Projected Return | Realized Return |  Risk |', \
+            '|-----------------------------------------|-----------------:|----------------:|------:|', \
+            "| [A](#var.vPage='stock'&var.vSymbol='A') |           31.24% |          35.90% | 4.80% |", \
+            "| [B](#var.vPage='stock'&var.vSymbol='B') |          -19.90% |          77.90% | 5.50% |", \
+            "| [C](#var.vPage='stock'&var.vSymbol='C') |           11.60% |                 | 4.90% |", \
+            "| [D](#var.vPage='stock'&var.vSymbol='D') |          -23.00% |         118.50% | 5.50% |" \
+        ]]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzRunPage')
+
+
+async function testMarkowitzRunPage_message():
+    args = {'page': 'run', 'id': 'r1'}
+    run = objectCopy(testRun)
+    objectSet(run, 'portfolios', arraySlice(objectGet(testRun, 'portfolios'), 0, 1))
+    unittestMockAll({'systemFetch': {'getRun?id=r1': jsonStringify({'run': run})}})
+    markowitzRunPage(args, 'The run could not be deleted.')
+    calls = unittestMockEnd()
+
+    # The message follows the header
+    unittestDeepEqual(arrayGet(calls, 3), ['markdownPrint', ['**The run could not be deleted.**', '']])
+
+    # With one solved portfolio, there's no efficient frontier chart
+    for call in calls:
+        unittestEqual(jsonStringify(call) != jsonStringify(['markdownPrint', ['', '## Efficient Frontier', '']]), true)
+    endfor
+endfunction
+unittestRunTest('testMarkowitzRunPage_message')
+
+
+async function testMarkowitzRunPage_error():
+    unittestMockAll({})
+    markowitzRunPage({'page': 'run', 'id': 'r1'})
+    expected = [['systemFetch', ['getRun?id=r1']]]
+    arrayExtend(expected, testHeaderCalls('Run', 'Run'))
+    arrayPush(expected, ['markdownPrint', ['**Error:** The run could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzRunPage_error')
+
+
+async function testMarkowitzRunPage_noID():
+    unittestMockAll({})
+    markowitzRunPage({'page': 'run'})
+    expected = testHeaderCalls('Run', 'Run')
+    arrayPush(expected, ['markdownPrint', ['**Error:** The run could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzRunPage_noID')
+
+
+async function testMarkowitzRunPage_deleteBinding():
+    args = {'page': 'run', 'id': 'r1'}
+    data = {'systemFetch': {'getRun?id=r1': jsonStringify({'run': testRun}), 'deleteRun': '{}'}}
+    testVerifyClick(systemPartial(markowitzRunPage, args), 'Delete', systemPartial(markowitzOnDeleteRun, args, 'r1'), data)
+endfunction
+unittestRunTest('testMarkowitzRunPage_deleteBinding')
+
+
+async function testMarkowitzOnDeleteRun():
+    unittestMockAll({'systemFetch': {'deleteRun': '{}'}})
+    markowitzOnDeleteRun({'page': 'run', 'id': 'r1'}, 'r1')
+    unittestDeepEqual(unittestMockEnd(), [ \
+        ['systemFetch', [{'url': 'deleteRun', 'body': '{"id":"r1"}'}]], \
+        ['windowSetLocation', ['#var=']] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzOnDeleteRun')
+
+
+async function testMarkowitzOnDeleteRun_error():
+    args = {'page': 'run', 'id': 'r1'}
+    data = {'systemFetch': {'getRun?id=r1': jsonStringify({'run': testRun})}}
+    unittestMockAll(data)
+    markowitzOnDeleteRun(args, 'r1')
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['systemFetch', [{'url': 'deleteRun', 'body': '{"id":"r1"}'}]])
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(systemPartial(markowitzRunPage, args, 'The run could not be deleted.'), data))
+endfunction
+unittestRunTest('testMarkowitzOnDeleteRun_error')
+
+
+#
+# New run page tests
+#
+
+
+async function testMarkowitzNewRunPage():
+    unittestMockAll({'systemFetch': {'getStocks': jsonStringify({'stocks': testStocks})}})
+    markowitzNewRunPage({'page': 'new'})
+    expected = [['systemFetch', ['getStocks']]]
+    arrayExtend(expected, testHeaderCalls('New Run', 'New Run'))
+    arrayExtend(expected, testFormCalls(markowitzRunFormDefault))
+    arrayPush(expected, \
+        ['markdownPrint', ['', '## Stocks', '']], \
+        ['markdownPrint', [testStocksTable]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage')
+
+
+async function testMarkowitzNewRunPage_runAgain():
+    unittestMockAll({'systemFetch': { \
+        'getStocks': jsonStringify({'stocks': testStocks}), \
+        'getRun?id=r1': jsonStringify({'run': testRun}) \
+    }})
+    markowitzNewRunPage({'page': 'new', 'id': 'r1'})
+    expected = [['systemFetch', ['getStocks']], ['systemFetch', ['getRun?id=r1']]]
+    arrayExtend(expected, testHeaderCalls('New Run', 'New Run'))
+    arrayExtend(expected, testFormCalls({ \
+        'name': 'Blue <Chips>', \
+        'symbols': 'A B C D', \
+        'endMonth': '2023-01', \
+        'months': '36', \
+        'horizon': '3', \
+        'targets': '6.17, 19.56, 151.8' \
+    }))
+    arrayPush(expected, \
+        ['markdownPrint', ['', '## Stocks', '']], \
+        ['markdownPrint', [testStocksTable]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_runAgain')
+
+
+async function testMarkowitzNewRunPage_message():
+    unittestMockAll({'systemFetch': {'getStocks': jsonStringify({'stocks': []})}})
+    markowitzNewRunPage({'page': 'new'}, testForm, 'The run failed.')
+    expected = [['systemFetch', ['getStocks']]]
+    arrayExtend(expected, testHeaderCalls('New Run', 'New Run'))
+    arrayPush(expected, ['markdownPrint', ['**The run failed.**', '']])
+    arrayExtend(expected, testFormCalls(testForm))
+    arrayPush(expected, \
+        ['markdownPrint', ['', '## Stocks', '']], \
+        ['markdownPrint', ["There are no stocks. [Add stocks](#var.vPage='stocks')."]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_message')
+
+
+async function testMarkowitzNewRunPage_error():
+    unittestMockAll({})
+    markowitzNewRunPage({'page': 'new'})
+    expected = [['systemFetch', ['getStocks']]]
+    arrayExtend(expected, testHeaderCalls('New Run', 'New Run'))
+    arrayPush(expected, ['markdownPrint', ['**Error:** The stocks could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_error')
+
+
+async function testMarkowitzNewRunPage_startBinding():
+    args = {'page': 'new'}
+    data = { \
+        'documentInputValue': testFormInputs(testForm), \
+        'systemFetch': {'getStocks': jsonStringify({'stocks': testStocks}), 'createRun': '{"id": "r2"}'} \
+    }
+    testVerifyClick(systemPartial(markowitzNewRunPage, args), 'Start Run', systemPartial(markowitzOnStartRun, args, testStocks), data)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_startBinding')
+
+
+async function testMarkowitzOnStartRun():
+    unittestMockAll({'documentInputValue': testFormInputs(testForm), 'systemFetch': {'createRun': '{"id": "r2"}'}})
+    markowitzOnStartRun({'page': 'new'}, testStocks)
+    expected = arrayCopy(testFormInputCalls)
+    arrayPush(expected, \
+        ['systemFetch', [{'url': 'createRun', 'body': jsonStringify(testRequest)}]], \
+        ['windowSetLocation', ["#var.vId='r2'&var.vPage='run'"]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzOnStartRun')
+
+
+async function testMarkowitzOnStartRun_invalid():
+    args = {'page': 'new'}
+    form = objectAssign(objectCopy(testForm), {'symbols': 'IBM, XYZ'})
+    data = {'documentInputValue': testFormInputs(form), 'systemFetch': {'getStocks': jsonStringify({'stocks': testStocks})}}
+    unittestMockAll(data)
+    markowitzOnStartRun(args, testStocks)
+    calls = unittestMockEnd()
+    unittestDeepEqual(arraySlice(calls, 0, 6), testFormInputCalls)
+    message = 'Unknown stocks: XYZ - add them on the Stocks page.'
+    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(systemPartial(markowitzNewRunPage, args, form, message), data))
+endfunction
+unittestRunTest('testMarkowitzOnStartRun_invalid')
+
+
+async function testMarkowitzOnStartRun_error():
+    args = {'page': 'new'}
+    data = {'documentInputValue': testFormInputs(testForm), 'systemFetch': {'getStocks': jsonStringify({'stocks': testStocks})}}
+    unittestMockAll(data)
+    markowitzOnStartRun(args, testStocks)
+    calls = unittestMockEnd()
+    unittestDeepEqual(arraySlice(calls, 0, 7), testArrayConcat(testFormInputCalls, [ \
+        ['systemFetch', [{'url': 'createRun', 'body': jsonStringify(testRequest)}]] \
+    ]))
+    unittestDeepEqual(arraySlice(calls, 7), testPageCalls(systemPartial(markowitzNewRunPage, args, testForm, 'The run failed.'), data))
+endfunction
+unittestRunTest('testMarkowitzOnStartRun_error')
+
+
+#
+# Run request tests
+#
+
+
+function testMarkowitzRunRequest():
+    unittestDeepEqual(markowitzRunRequest(testForm, testStocks), {'request': testRequest})
+endfunction
+unittestRunTest('testMarkowitzRunRequest')
+
+
+function testMarkowitzRunRequest_endMonth():
+    form = objectAssign(objectCopy(testForm), {'endMonth': ' 1990-06 ', 'months': '60'})
+    request = objectAssign(objectCopy(testRequest), {'endMonth': '1990-06', 'months': 60})
+    unittestDeepEqual(markowitzRunRequest(form, testStocks), {'request': request})
+endfunction
+unittestRunTest('testMarkowitzRunRequest_endMonth')
+
+
+function testMarkowitzRunRequest_invalid():
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'name': ' '}), testStocks), \
+        {'error': 'Invalid "Name" value.'} \
+    )
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'months': '-5'}), testStocks), \
+        {'error': 'Invalid "Months in the analysis period" value.'} \
+    )
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'months': 'many'}), testStocks), \
+        {'error': 'Invalid "Months in the analysis period" value.'} \
+    )
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'targets': '10, ten'}), testStocks), \
+        {'error': 'Invalid "Target annual returns, in percent, separated by spaces or commas" value.'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_invalid')
+
+
+# Create a symbols text of a number of unique symbols
+function testSymbolsText(count):
+    symbols = []
+    while arrayLength(symbols) < count:
+        arrayPush(symbols, 'S' + arrayLength(symbols))
+    endwhile
+    return arrayJoin(symbols, ' ')
+endfunction
+
+
+function testMarkowitzRunRequest_symbolCount():
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'symbols': 'IBM ibm'}), testStocks), \
+        {'error': 'Enter 2 to 100 stock symbols (you entered 1).'} \
+    )
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'symbols': testSymbolsText(101)}), testStocks), \
+        {'error': 'Enter 2 to 100 stock symbols (you entered 101).'} \
+    )
+
+    # One hundred stocks are checked against the stocks (and the months)
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'symbols': testSymbolsText(100)}), testStocks), \
+        {'error': 'There are more stocks (100) than months (36) - increase the months in the analysis period.'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_symbolCount')
+
+
+function testMarkowitzRunRequest_invalidMonth():
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'endMonth': '2023-13'}), testStocks), \
+        {'error': 'Invalid end month "2023-13" - use "YYYY-MM".'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_invalidMonth')
+
+
+function testMarkowitzRunRequest_tooManyStocks():
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'symbols': 'A B C D E F G', 'months': '6'}), testStocks), \
+        {'error': 'There are more stocks (7) than months (6) - increase the months in the analysis period.'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_tooManyStocks')
+
+
+function testMarkowitzRunRequest_unknownStocks():
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'symbols': 'XYZ IBM ABC'}), testStocks), \
+        {'error': 'Unknown stocks: ABC, XYZ - add them on the Stocks page.'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_unknownStocks')
+
+
+function testMarkowitzRunRequest_missingMonths():
+    # KO's prices start in 1985-01 - the analysis period's starting price is needed
+    unittestEqual( \
+        objectHas(markowitzRunRequest(objectAssign(objectCopy(testForm), {'endMonth': '1988-01'}), testStocks), 'request'), \
+        true \
+    )
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'endMonth': '1987-12'}), testStocks), \
+        {'error': 'Stocks without prices from 1984-12 to 1987-12: KO.'} \
+    )
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'endMonth': '2026-10'}), testStocks), \
+        {'error': 'Stocks without prices from 2023-10 to 2026-10: IBM, KO.'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_missingMonths')
+
+
+#
+# Stocks page tests
+#
+
+
+async function testMarkowitzStocksPage():
+    unittestMockAll({'systemFetch': {'getStocks': jsonStringify({'stocks': testStocks})}})
+    markowitzStocksPage({'page': 'stocks'})
+    expected = testHeaderCalls('Stocks', 'Stocks')
+    arrayPush(expected, \
+        ['systemFetch', ['getStocks']], \
+        ['markdownPrint', [ \
+            'Download stocks\' monthly prices from Yahoo Finance. Enter stock symbols, separated by spaces or commas, to', \
+            'add or update them.', \
+            '' \
+        ]], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            formsTextElements('markowitz-symbols', '', 40), \
+            {'text': ' '}, \
+            formsLinkButtonElements('Add / Update', '<function>'), \
+            {'text': ' | '}, \
+            formsLinkButtonElements('Update All', '<function>') \
+        ]}]], \
+        ['markdownPrint', [testStocksTable]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStocksPage')
+
+
+async function testMarkowitzStocksPage_empty():
+    unittestMockAll({'systemFetch': {'getStocks': jsonStringify({'stocks': []})}})
+    markowitzStocksPage({'page': 'stocks'}, 'Enter one to fifty stock symbols.')
+    expected = testHeaderCalls('Stocks', 'Stocks')
+    arrayPush(expected, \
+        ['systemFetch', ['getStocks']], \
+        ['markdownPrint', ['**Enter one to fifty stock symbols.**', '']], \
+        ['markdownPrint', [ \
+            'Download stocks\' monthly prices from Yahoo Finance. Enter stock symbols, separated by spaces or commas, to', \
+            'add or update them.', \
+            '' \
+        ]], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            formsTextElements('markowitz-symbols', '', 40), \
+            {'text': ' '}, \
+            formsLinkButtonElements('Add / Update', '<function>') \
+        ]}]], \
+        ['markdownPrint', ['There are no stocks.']] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStocksPage_empty')
+
+
+async function testMarkowitzStocksPage_error():
+    unittestMockAll({})
+    markowitzStocksPage({'page': 'stocks'})
+    expected = testHeaderCalls('Stocks', 'Stocks')
+    arrayPush(expected, ['systemFetch', ['getStocks']], ['markdownPrint', ['**Error:** The stocks could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStocksPage_error')
+
+
+async function testMarkowitzStocksPage_updateBinding():
+    args = {'page': 'stocks'}
+    data = { \
+        'documentInputValue': {'markowitz-symbols': 'msft'}, \
+        'systemFetch': { \
+            'getStocks': jsonStringify({'stocks': testStocks}), \
+            'updateStocks': jsonStringify({'results': [{'symbol': 'MSFT', 'stock': arrayGet(testStocks, 0)}]}) \
+        } \
+    }
+    testVerifyClick(systemPartial(markowitzStocksPage, args), 'Add / Update', systemPartial(markowitzOnUpdateStocks, args, null), data)
+endfunction
+unittestRunTest('testMarkowitzStocksPage_updateBinding')
+
+
+async function testMarkowitzStocksPage_updateAllBinding():
+    args = {'page': 'stocks'}
+    data = {'systemFetch': { \
+        'getStocks': jsonStringify({'stocks': testStocks}), \
+        'updateStocks': jsonStringify({'results': [{'symbol': 'IBM', 'stock': arrayGet(testStocks, 0)}]}) \
+    }}
+    testVerifyClick(systemPartial(markowitzStocksPage, args), 'Update All', systemPartial(markowitzOnUpdateStocks, args, ['IBM', 'KO']), data)
+endfunction
+unittestRunTest('testMarkowitzStocksPage_updateAllBinding')
+
+
+async function testMarkowitzOnUpdateStocks():
+    args = {'page': 'stocks'}
+    data = { \
+        'documentInputValue': {'markowitz-symbols': ' msft,xyz '}, \
+        'systemFetch': { \
+            'getStocks': jsonStringify({'stocks': testStocks}), \
+            'updateStocks': jsonStringify({'results': [ \
+                {'symbol': 'MSFT', 'stock': arrayGet(testStocks, 0)}, \
+                {'symbol': 'XYZ', 'error': 'Download failed'} \
+            ]}) \
+        } \
+    }
+    unittestMockAll(data)
+    markowitzOnUpdateStocks(args, null)
+    calls = unittestMockEnd()
+    unittestDeepEqual(arraySlice(calls, 0, 2), [ \
+        ['documentInputValue', ['markowitz-symbols']], \
+        ['systemFetch', [{'url': 'updateStocks', 'body': '{"symbols":["msft","xyz"]}'}]] \
+    ])
+    message = 'Updated MSFT. Failed XYZ (Download failed).'
+    unittestDeepEqual(arraySlice(calls, 2), testPageCalls(systemPartial(markowitzStocksPage, args, message), data))
+endfunction
+unittestRunTest('testMarkowitzOnUpdateStocks')
+
+
+async function testMarkowitzOnUpdateStocks_invalid():
+    args = {'page': 'stocks'}
+    data = {'documentInputValue': {'markowitz-symbols': ' '}, 'systemFetch': {'getStocks': jsonStringify({'stocks': testStocks})}}
+    unittestMockAll(data)
+    markowitzOnUpdateStocks(args, null)
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['documentInputValue', ['markowitz-symbols']])
+    message = 'Enter one to fifty stock symbols.'
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(systemPartial(markowitzStocksPage, args, message), data))
+endfunction
+unittestRunTest('testMarkowitzOnUpdateStocks_invalid')
+
+
+async function testMarkowitzUpdateStocks():
+    unittestMockAll({'systemFetch': {'updateStocks': jsonStringify({'results': [ \
+        {'symbol': 'IBM', 'stock': arrayGet(testStocks, 0)}, \
+        {'symbol': 'KO', 'stock': arrayGet(testStocks, 1)} \
+    ]})}})
+    unittestEqual(markowitzUpdateStocks({'symbols': ['IBM', 'KO']}), 'Updated IBM, KO.')
+    unittestDeepEqual(unittestMockEnd(), [['systemFetch', [{'url': 'updateStocks', 'body': '{"symbols":["IBM","KO"]}'}]]])
+endfunction
+unittestRunTest('testMarkowitzUpdateStocks')
+
+
+async function testMarkowitzUpdateStocks_failed():
+    unittestMockAll({'systemFetch': {'updateStocks': jsonStringify({'results': [ \
+        {'symbol': 'XYZ', 'error': 'Download failed'}, \
+        {'symbol': 'ZZZ', 'error': 'Database update failed (conflict)'} \
+    ]})}})
+    unittestEqual( \
+        markowitzUpdateStocks({'symbols': ['XYZ', 'ZZZ']}), \
+        'Failed XYZ (Download failed), ZZZ (Database update failed (conflict)).' \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testMarkowitzUpdateStocks_failed')
+
+
+async function testMarkowitzUpdateStocks_error():
+    unittestMockAll({})
+    unittestEqual(markowitzUpdateStocks({'symbols': ['IBM']}), 'The stock update failed.')
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testMarkowitzUpdateStocks_error')
+
+
+#
+# Stock page tests
+#
+
+
+async function testMarkowitzStockPage():
+    args = {'page': 'stock', 'symbol': 'IBM'}
+    prices = {'2026-08': 10, '2026-07': 9, '2025-12': 8.5}
+    unittestMockAll({'systemFetch': {'getStock?symbol=IBM': jsonStringify({'stock': arrayGet(testStocks, 0), 'prices': prices})}})
+    markowitzStockPage(args)
+    expected = [['systemFetch', ['getStock?symbol=IBM']]]
+    arrayExtend(expected, testHeaderCalls('IBM', 'IBM'))
+    arrayPush(expected, \
+        ['markdownPrint', [ \
+            '- **Name:** International Business Machines', \
+            '- **Currency:** USD', \
+            '- **Months:** 777, 1962-01 to 2026-09', \
+            '- **Updated:** 2026-10-10 12:30', \
+            '' \
+        ]], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            formsLinkButtonElements('Update', '<function>'), \
+            {'text': ' | '}, \
+            formsLinkButtonElements('Delete', '<function>') \
+        ]}]], \
+        ['elementModelRender', [{'html': 'p', 'elem': dataLineChartElements( \
+            [ \
+                {'Month': datetimeNew(2025, 12, 1), 'Price': 8.5}, \
+                {'Month': datetimeNew(2026, 7, 1), 'Price': 9}, \
+                {'Month': datetimeNew(2026, 8, 1), 'Price': 10} \
+            ], \
+            {'title': 'Monthly Price (adjusted)', 'x': 'Month', 'y': ['Price'], 'yScale': 'log'} \
+        )}]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStockPage')
+
+
+async function testMarkowitzStockPage_message():
+    args = {'page': 'stock', 'symbol': 'ko'}
+    unittestMockAll({'systemFetch': {'getStock?symbol=ko': jsonStringify({'stock': arrayGet(testStocks, 1), 'prices': {'2026-07': 9}})}})
+    markowitzStockPage(args, 'Updated KO.')
+    calls = unittestMockEnd()
+    unittestDeepEqual(arraySlice(calls, 0, 6), [ \
+        ['systemFetch', ['getStock?symbol=ko']], \
+        ['documentSetTitle', ['KO']], \
+        ['markdownPrint', ['# KO', '', testMenu, '']], \
+        ['markdownPrint', ['**Updated KO.**', '']], \
+        ['markdownPrint', [ \
+            '- **Name:** ', \
+            '- **Currency:** ', \
+            '- **Months:** 501, 1985-01 to 2026-09', \
+            '- **Updated:** 2026-10-10 12:30', \
+            '' \
+        ]], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            formsLinkButtonElements('Update', '<function>'), \
+            {'text': ' | '}, \
+            formsLinkButtonElements('Delete', '<function>') \
+        ]}]] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzStockPage_message')
+
+
+async function testMarkowitzStockPage_error():
+    unittestMockAll({})
+    markowitzStockPage({'page': 'stock', 'symbol': 'XYZ'})
+    expected = [['systemFetch', ['getStock?symbol=XYZ']]]
+    arrayExtend(expected, testHeaderCalls('Stock', 'Stock'))
+    arrayPush(expected, ['markdownPrint', ['**Error:** The stock could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStockPage_error')
+
+
+async function testMarkowitzStockPage_noSymbol():
+    unittestMockAll({})
+    markowitzStockPage({'page': 'stock'})
+    expected = testHeaderCalls('Stock', 'Stock')
+    arrayPush(expected, ['markdownPrint', ['**Error:** The stock could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStockPage_noSymbol')
+
+
+async function testMarkowitzStockPage_updateBinding():
+    args = {'page': 'stock', 'symbol': 'IBM'}
+    data = {'systemFetch': { \
+        'getStock?symbol=IBM': jsonStringify({'stock': arrayGet(testStocks, 0), 'prices': {'2026-07': 9}}), \
+        'updateStocks': jsonStringify({'results': [{'symbol': 'IBM', 'stock': arrayGet(testStocks, 0)}]}) \
+    }}
+    testVerifyClick(systemPartial(markowitzStockPage, args), 'Update', systemPartial(markowitzOnUpdateStock, args, 'IBM'), data)
+endfunction
+unittestRunTest('testMarkowitzStockPage_updateBinding')
+
+
+async function testMarkowitzStockPage_deleteBinding():
+    args = {'page': 'stock', 'symbol': 'IBM'}
+    data = {'systemFetch': { \
+        'getStock?symbol=IBM': jsonStringify({'stock': arrayGet(testStocks, 0), 'prices': {'2026-07': 9}}), \
+        'deleteStock': '{}' \
+    }}
+    testVerifyClick(systemPartial(markowitzStockPage, args), 'Delete', systemPartial(markowitzOnDeleteStock, args, 'IBM'), data)
+endfunction
+unittestRunTest('testMarkowitzStockPage_deleteBinding')
+
+
+async function testMarkowitzOnUpdateStock():
+    args = {'page': 'stock', 'symbol': 'IBM'}
+    data = {'systemFetch': { \
+        'getStock?symbol=IBM': jsonStringify({'stock': arrayGet(testStocks, 0), 'prices': {'2026-07': 9}}), \
+        'updateStocks': jsonStringify({'results': [{'symbol': 'IBM', 'stock': arrayGet(testStocks, 0)}]}) \
+    }}
+    unittestMockAll(data)
+    markowitzOnUpdateStock(args, 'IBM')
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['systemFetch', [{'url': 'updateStocks', 'body': '{"symbols":["IBM"]}'}]])
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(systemPartial(markowitzStockPage, args, 'Updated IBM.'), data))
+endfunction
+unittestRunTest('testMarkowitzOnUpdateStock')
+
+
+async function testMarkowitzOnDeleteStock():
+    unittestMockAll({'systemFetch': {'deleteStock': '{}'}})
+    markowitzOnDeleteStock({'page': 'stock', 'symbol': 'IBM'}, 'IBM')
+    unittestDeepEqual(unittestMockEnd(), [ \
+        ['systemFetch', [{'url': 'deleteStock', 'body': '{"symbol":"IBM"}'}]], \
+        ['windowSetLocation', ["#var.vPage='stocks'"]] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzOnDeleteStock')
+
+
+async function testMarkowitzOnDeleteStock_error():
+    args = {'page': 'stock', 'symbol': 'IBM'}
+    data = {'systemFetch': {'getStock?symbol=IBM': jsonStringify({'stock': arrayGet(testStocks, 0), 'prices': {'2026-07': 9}})}}
+    unittestMockAll(data)
+    markowitzOnDeleteStock(args, 'IBM')
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['systemFetch', [{'url': 'deleteStock', 'body': '{"symbol":"IBM"}'}]])
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(systemPartial(markowitzStockPage, args, 'The stock could not be deleted.'), data))
+endfunction
+unittestRunTest('testMarkowitzOnDeleteStock_error')
+
+
+#
+# Helper tests
+#
+
+
+function testMarkowitzParseList():
+    unittestDeepEqual(markowitzParseList(''), [])
+    unittestDeepEqual(markowitzParseList(' , '), [])
+    unittestDeepEqual(markowitzParseList(' ibm,KO  msft, '), ['ibm', 'KO', 'msft'])
+endfunction
+unittestRunTest('testMarkowitzParseList')
+
+
+function testMarkowitzSymbols():
+    unittestDeepEqual(markowitzSymbols(['ko', 'IBM', 'KO', 'brk-b']), ['BRK-B', 'IBM', 'KO'])
+endfunction
+unittestRunTest('testMarkowitzSymbols')
+
+
+function testMarkowitzMonths():
+    unittestEqual(markowitzMonthIndex('2023-01'), 2023 * 12)
+    unittestEqual(markowitzMonthIndex('2023-00'), null)
+    unittestEqual(markowitzMonthIndex('January'), null)
+    unittestEqual(markowitzMonthString(2023 * 12 + 9), '2023-10')
+    unittestEqual(markowitzMonthString(2023 * 12 + 2), '2023-03')
+endfunction
+unittestRunTest('testMarkowitzMonths')
+
+
+function testMarkowitzPercentText():
+    unittestEqual(markowitzPercentText(12.345), '12.35%')
+    unittestEqual(markowitzPercentText(-5), '-5.00%')
+    unittestEqual(markowitzPercentText(null), '')
+endfunction
+unittestRunTest('testMarkowitzPercentText')
+
+
+function testMarkowitzDatetimeText():
+    unittestEqual(markowitzDatetimeText(testCreated), testCreatedText)
+endfunction
+unittestRunTest('testMarkowitzDatetimeText')

@@ -1,0 +1,308 @@
+include <schemaParser.bare>
+
+
+# The Markowitz API's Schema Markdown types - shared by the backend, which serves the API, and the frontend,
+# which validates its requests
+markowitzTypes = schemaParse( \
+    '# The errors common to every action', \
+    'enum MarkowitzError', \
+    '', \
+    '    # The database request failed', \
+    '    DatabaseError', \
+    '', \
+    '', \
+    '# A stock symbol (e.g. "IBM")', \
+    'typedef string(len > 0, len <= 20) Symbol', \
+    '', \
+    '', \
+    '# A month string, "YYYY-MM" (e.g. "1967-06")', \
+    'typedef string(len == 7) Month', \
+    '', \
+    '', \
+    'group "Stocks"', \
+    '', \
+    '', \
+    '# A stock\'s summary', \
+    'struct StockInfo', \
+    '', \
+    '    # The stock symbol', \
+    '    string symbol', \
+    '', \
+    '    # The stock\'s name', \
+    '    optional string name', \
+    '', \
+    '    # The price currency (e.g. "USD")', \
+    '    optional string currency', \
+    '', \
+    '    # The first month with a price', \
+    '    Month firstMonth', \
+    '', \
+    '    # The last month with a price', \
+    '    Month lastMonth', \
+    '', \
+    '    # The number of months with a price', \
+    '    int monthCount', \
+    '', \
+    '    # The time the stock\'s prices were downloaded', \
+    '    datetime updated', \
+    '', \
+    '', \
+    '# A stock update\'s result', \
+    'struct StockUpdate', \
+    '', \
+    '    # The stock symbol', \
+    '    string symbol', \
+    '', \
+    '    # The updated stock\'s summary - absent if the update failed', \
+    '    optional StockInfo stock', \
+    '', \
+    '    # The update\'s error message - absent if the update succeeded', \
+    '    optional string error', \
+    '', \
+    '', \
+    '# Get the stocks', \
+    'action getStocks', \
+    '    urls', \
+    '        GET', \
+    '', \
+    '    output', \
+    '', \
+    '        # The stocks, sorted by symbol', \
+    '        StockInfo[] stocks', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '', \
+    '# Get a stock and its monthly prices', \
+    'action getStock', \
+    '    urls', \
+    '        GET', \
+    '', \
+    '    query', \
+    '', \
+    '        # The stock symbol', \
+    '        Symbol symbol', \
+    '', \
+    '    output', \
+    '', \
+    '        # The stock\'s summary', \
+    '        StockInfo stock', \
+    '', \
+    '        # The map of month ("YYYY-MM") to month-end price, adjusted for splits and dividends', \
+    '        float{} prices', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '        # The stock is unknown', \
+    '        UnknownStock', \
+    '', \
+    '', \
+    '# Download stocks\' monthly prices and add or update them in the database', \
+    'action updateStocks', \
+    '    input', \
+    '', \
+    '        # The stock symbols', \
+    '        Symbol[len > 0, len <= 50] symbols', \
+    '', \
+    '    output', \
+    '', \
+    '        # The update results, in symbol order', \
+    '        StockUpdate[] results', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '', \
+    '# Delete a stock', \
+    'action deleteStock', \
+    '    input', \
+    '', \
+    '        # The stock symbol', \
+    '        Symbol symbol', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '        # The stock is unknown', \
+    '        UnknownStock', \
+    '', \
+    '', \
+    'group "Runs"', \
+    '', \
+    '', \
+    '# A run\'s summary', \
+    'struct RunInfo', \
+    '', \
+    '    # The run ID', \
+    '    string id', \
+    '', \
+    '    # The run name', \
+    '    string name', \
+    '', \
+    '    # The time the run was created', \
+    '    datetime created', \
+    '', \
+    '    # The portfolio stock symbols', \
+    '    string[] symbols', \
+    '', \
+    '    # The last month of the analysis period', \
+    '    Month endMonth', \
+    '', \
+    '    # The number of months in the analysis period', \
+    '    int months', \
+    '', \
+    '    # The number of months, following the analysis period, of the projection', \
+    '    int horizon', \
+    '', \
+    '    # The target annual returns, in percent', \
+    '    float[] targets', \
+    '', \
+    '', \
+    '# A run - its portfolio stocks\' statistics and a portfolio for each target return', \
+    'struct Run (RunInfo)', \
+    '', \
+    '    # The portfolio stocks\' statistics', \
+    '    RunStock[] stocks', \
+    '', \
+    '    # The portfolios, one for each target return', \
+    '    Portfolio[] portfolios', \
+    '', \
+    '', \
+    '# A run stock\'s statistics', \
+    'struct RunStock', \
+    '', \
+    '    # The stock symbol', \
+    '    string symbol', \
+    '', \
+    '    # The projected annual return, in percent, from the analysis period\'s monthly return trend', \
+    '    float expectedReturn', \
+    '', \
+    '    # The variance of the monthly returns, in percent, about their trend', \
+    '    float variance', \
+    '', \
+    '    # The annualized return, in percent, realized over the projection months - absent if the months', \
+    '    # have not passed', \
+    '    optional float realizedReturn', \
+    '', \
+    '', \
+    '# A target return\'s minimum-variance portfolio', \
+    'struct Portfolio', \
+    '', \
+    '    # The target annual return, in percent', \
+    '    float target', \
+    '', \
+    '    # If false, there is no solution - the target return is not attainable', \
+    '    bool solved', \
+    '', \
+    '    # The portfolio allocations, in symbol order', \
+    '    Allocation[] allocations', \
+    '', \
+    '    # The stocks deleted from the portfolio for negative allocations, in order of deletion', \
+    '    string[] deleted', \
+    '', \
+    '    # The variance of the portfolio\'s monthly returns, in percent', \
+    '    optional float variance', \
+    '', \
+    '    # The portfolio\'s annualized return, in percent, realized over the projection months - absent', \
+    '    # if the months have not passed', \
+    '    optional float realizedReturn', \
+    '', \
+    '', \
+    '# A portfolio allocation', \
+    'struct Allocation', \
+    '', \
+    '    # The stock symbol', \
+    '    string symbol', \
+    '', \
+    '    # The fraction of the portfolio to invest in the stock', \
+    '    float weight', \
+    '', \
+    '', \
+    '# Get the runs', \
+    'action getRuns', \
+    '    urls', \
+    '        GET', \
+    '', \
+    '    output', \
+    '', \
+    '        # The runs, most recent first', \
+    '        RunInfo[] runs', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '', \
+    '# Get a run', \
+    'action getRun', \
+    '    urls', \
+    '        GET', \
+    '', \
+    '    query', \
+    '', \
+    '        # The run ID', \
+    '        string id', \
+    '', \
+    '    output', \
+    '', \
+    '        # The run', \
+    '        Run run', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '        # The run is unknown', \
+    '        UnknownRun', \
+    '', \
+    '', \
+    '# Start a run - compute the minimum-variance portfolio for each target return from the stocks\' monthly', \
+    '# returns, the method of Harry Markowitz, as ported from a 1967 Fortran program', \
+    'action createRun', \
+    '    input', \
+    '', \
+    '        # The run name', \
+    '        string(len > 0, len <= 100) name', \
+    '', \
+    '        # The portfolio stock symbols', \
+    '        Symbol[len >= 2, len <= 100] symbols', \
+    '', \
+    '        # The last month of the analysis period (default is the last month for which every stock has a', \
+    '        # price)', \
+    '        optional Month endMonth', \
+    '', \
+    '        # The number of months in the analysis period (default is 36)', \
+    '        optional int(>= 6, <= 240) months', \
+    '', \
+    '        # The number of months, following the analysis period, of the projection (default is 3)', \
+    '        optional int(>= 1, <= 12) horizon', \
+    '', \
+    '        # The target annual returns, in percent', \
+    '        float(> -100, <= 1000)[len > 0, len <= 30] targets', \
+    '', \
+    '    output', \
+    '', \
+    '        # The new run\'s ID', \
+    '        string id', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '        # The end month is not a "YYYY-MM" month', \
+    '        InvalidMonth', \
+    '', \
+    '        # A stock is unknown', \
+    '        UnknownStock', \
+    '', \
+    '        # A stock has no price for a month of the analysis period', \
+    '        MissingData', \
+    '', \
+    '        # There are more stocks than months in the analysis period - the problem is singular', \
+    '        TooManyStocks', \
+    '', \
+    '', \
+    '# Delete a run', \
+    'action deleteRun', \
+    '    input', \
+    '', \
+    '        # The run ID', \
+    '        string id', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '        # The run is unknown', \
+    '        UnknownRun' \
+)
