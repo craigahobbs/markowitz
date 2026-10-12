@@ -42,3 +42,9 @@ async function testVerifyClick(renderFn, text, expectedFn, data):
     found = testFindClick(unittestMockEnd(), text)
     testSameEffect(found, expectedFn, data)
 endfunction
+
+
+# Capture a window timeout's callback - mock "windowSetTimeout" with "systemPartial(testCaptureTimeout, callbacks)"
+function testCaptureTimeout(callbacks, callback):
+    arrayPush(callbacks, callback)
+endfunction

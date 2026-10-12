@@ -372,7 +372,6 @@ async function markowitzNewRunPage(args, form, message, selecting, stocks, group
         markdownPrint('**Error:** The stocks could not be loaded.')
         return
     endif
-    markowitzMessage(message)
 
     # The selected stock group - none if it doesn't exist
     group = markowitzGroupFind(groups, objectGet(form, 'group'))
@@ -427,6 +426,9 @@ async function markowitzNewRunPage(args, form, message, selecting, stocks, group
             inputElements \
         ]})
     endfor
+
+    # The message (e.g. from "Start Run"), and the Start Run button
+    markowitzMessage(message)
     elementModelRender({'html': 'p', 'elem': formsLinkButtonElements( \
         'Start Run', systemPartial(markowitzOnStartRun, args, stocks, groups, groupName) \
     )})
@@ -537,8 +539,9 @@ function markowitzGroupMinimumText(group, stocks, endIndex):
     months = objectGet(minimum, 'months')
     count = objectGet(minimum, 'count')
     if months == null:
-        return '**Note:** ' + count + ' of the group\'s ' + arrayLength(symbols) + ' stocks have prices for ' + \
-            markowitzRunMonthsMax + ' months (the most) - exclude stocks to run the group.'
+        return '**Note:** This group can\'t be run - ' + count + ' of its ' + arrayLength(symbols) + ' stocks have prices ' + \
+            'for ' + markowitzRunMonthsMax + ' months (the most a run can have), and a run can\'t have more stocks than ' + \
+            'months. Exclude at least ' + (count - markowitzRunMonthsMax) + ' more stocks to run it.'
     elif count < 2:
         return '**Note:** Fewer than two of the group\'s stocks have prices - ' + \
             argsLink(markowitzArguments, 'update the stocks', {'page': 'group', 'group': objectGet(group, 'name')}, true) + '.'
@@ -636,8 +639,19 @@ async function markowitzOnStartRun(args, stocks, groups, group):
         return
     endif
 
-    # Start the run
-    response = markowitzFetch('createRun', objectGet(requestResult, 'request'))
+    # Render the running run's page, and start the run in a window timeout so the page renders first
+    markowitzHeader('New Run', null)
+    markdownPrint( \
+        '**Running "' + markdownEscape(objectGet(form, 'name')) + '"...** A run of many stocks can take a few minutes.', \
+        '' \
+    )
+    windowSetTimeout(systemPartial(markowitzOnStartRunTimeout, args, form, objectGet(requestResult, 'request'), stocks, groups), 0)
+endfunction
+
+
+# Start a run - the run's page is rendered when it's done
+async function markowitzOnStartRunTimeout(args, form, request, stocks, groups):
+    response = markowitzFetch('createRun', request)
     if response == null:
         markowitzNewRunPage(args, form, 'The run failed.', false, stocks, groups)
         return

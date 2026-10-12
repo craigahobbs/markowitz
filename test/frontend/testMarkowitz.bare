@@ -111,22 +111,29 @@ endfunction
 testExcludeLabel = 'Excluded stocks, separated by spaces or commas - updated when the group, end month, or months change'
 
 
-# The new run form render calls - if "change" is true, the analysis period inputs have change callbacks
-function testFormCalls(form, change):
-    return [ \
+# The new run form render calls - if "change" is true, the analysis period inputs have change callbacks. The message,
+# if any, is before the Start Run button.
+function testFormCalls(form, change, message):
+    calls = [ \
         testFormFieldCall('name', 'Name', 40, objectGet(form, 'name')), \
         testFormFieldCall('endMonth', 'End month of the analysis period, "YYYY-MM" (blank for the latest)', 10, objectGet(form, 'endMonth'), change), \
         testFormFieldCall('months', 'Months in the analysis period', 5, objectGet(form, 'months'), change), \
         testFormFieldCall('horizon', 'Months in the projection', 5, objectGet(form, 'horizon')), \
         testFormFieldCall('targets', 'Target annual returns, in percent, separated by spaces or commas', 40, objectGet(form, 'targets')), \
-        testFormFieldCall('exclude', testExcludeLabel, 80, objectGet(form, 'exclude')), \
+        testFormFieldCall('exclude', testExcludeLabel, 80, objectGet(form, 'exclude')) \
+    ]
+    if message != null:
+        arrayPush(calls, ['markdownPrint', ['**' + message + '**', '']])
+    endif
+    arrayPush(calls, \
         ['elementModelRender', [{'html': 'p', 'elem': formsLinkButtonElements('Start Run', '<function>')}]], \
         ['markdownPrint', [ \
             'Stocks without a price for every month of the analysis period are excluded from the run. A run needs at least', \
             'as many months as stocks.', \
             '' \
         ]] \
-    ]
+    )
+    return calls
 endfunction
 
 
@@ -549,9 +556,6 @@ endfunction
 function testNewRunCalls(fetchCalls, backURL, message, groupCall, selecting, form, minimumText, missingText):
     calls = arrayCopy(fetchCalls)
     arrayExtend(calls, testHeaderCalls('New Run', 'New Run', backURL))
-    if message != null:
-        arrayPush(calls, ['markdownPrint', ['**' + message + '**', '']])
-    endif
     arrayPush(calls, groupCall)
     if selecting:
         arrayPush(calls, testGroupListCall)
@@ -562,7 +566,7 @@ function testNewRunCalls(fetchCalls, backURL, message, groupCall, selecting, for
     if minimumText != null:
         arrayPush(calls, ['markdownPrint', [minimumText, '']])
     endif
-    arrayExtend(calls, testFormCalls(form, minimumText != null))
+    arrayExtend(calls, testFormCalls(form, minimumText != null, message))
     return calls
 endfunction
 
@@ -891,19 +895,65 @@ endfunction
 unittestRunTest('testMarkowitzOnRunPeriodChange')
 
 
+# The running run's page calls
+function testRunningCalls(name):
+    calls = testHeaderCalls('New Run', 'New Run')
+    arrayPush(calls, \
+        ['markdownPrint', ['**Running "' + name + '"...** A run of many stocks can take a few minutes.', '']], \
+        ['windowSetTimeout', ['<function>', 0]] \
+    )
+    return calls
+endfunction
+
+
 async function testMarkowitzOnStartRun():
     form = objectAssign(objectCopy(testForm), {'exclude': 'msft'})
-    unittestMockAll({'documentInputValue': testFormInputs(form), 'systemFetch': {'createRun': '{"id": "r2"}'}})
+    unittestMockAll({'documentInputValue': testFormInputs(form)})
     markowitzOnStartRun({'page': 'new'}, testStocks, testGroups, 'S&P 100')
     expected = arrayCopy(testFormInputCalls)
-    request = objectAssign(objectCopy(testRequest), {'group': 'S&P 100', 'exclude': ['MSFT']})
-    arrayPush(expected, \
-        ['systemFetch', [{'url': 'createRun', 'body': jsonStringify(request)}]], \
-        ['windowSetLocation', ["#var.vId='r2'&var.vPage='run'"]] \
-    )
+    arrayExtend(expected, testRunningCalls(' My Run '))
     unittestDeepEqual(unittestMockEnd(), expected)
 endfunction
 unittestRunTest('testMarkowitzOnStartRun')
+
+
+async function testMarkowitzOnStartRun_timeoutBinding():
+    args = {'page': 'new'}
+    form = objectAssign(objectCopy(testForm), {'group': 'S&P 100', 'exclude': 'msft'})
+    request = objectAssign(objectCopy(testRequest), {'group': 'S&P 100', 'exclude': ['MSFT']})
+    data = {'documentInputValue': testFormInputs(form), 'systemFetch': {'createRun': '{"id": "r2"}'}}
+    callbacks = []
+    unittestMockAll(data)
+    unittestMockOne('windowSetTimeout', systemPartial(testCaptureTimeout, callbacks))
+    markowitzOnStartRun(args, testStocks, testGroups, 'S&P 100')
+    unittestMockEnd()
+    testSameEffect(arrayGet(callbacks, 0), systemPartial(markowitzOnStartRunTimeout, args, form, request, testStocks, testGroups), data)
+endfunction
+unittestRunTest('testMarkowitzOnStartRun_timeoutBinding')
+
+
+async function testMarkowitzOnStartRunTimeout():
+    unittestMockAll({'systemFetch': {'createRun': '{"id": "r2"}'}})
+    markowitzOnStartRunTimeout({'page': 'new'}, testForm, testRequest, testStocks, testGroups)
+    unittestDeepEqual(unittestMockEnd(), [ \
+        ['systemFetch', [{'url': 'createRun', 'body': jsonStringify(testRequest)}]], \
+        ['windowSetLocation', ["#var.vId='r2'&var.vPage='run'"]] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzOnStartRunTimeout')
+
+
+async function testMarkowitzOnStartRunTimeout_error():
+    args = {'page': 'new'}
+    data = testNewRunData()
+    unittestMockAll(data)
+    markowitzOnStartRunTimeout(args, testForm, testRequest, testStocks, testGroups)
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['systemFetch', [{'url': 'createRun', 'body': jsonStringify(testRequest)}]])
+    render = systemPartial(markowitzNewRunPage, args, testForm, 'The run failed.', false, testStocks, testGroups)
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(render, data))
+endfunction
+unittestRunTest('testMarkowitzOnStartRunTimeout_error')
 
 
 async function testMarkowitzOnStartRun_invalid():
@@ -941,20 +991,6 @@ endfunction
 unittestRunTest('testMarkowitzOnStartRun_missing')
 
 
-async function testMarkowitzOnStartRun_error():
-    args = {'page': 'new'}
-    data = testNewRunData()
-    objectSet(data, 'documentInputValue', testFormInputs(testForm))
-    unittestMockAll(data)
-    markowitzOnStartRun(args, testStocks, testGroups, 'Dow 30')
-    calls = unittestMockEnd()
-    unittestDeepEqual(arraySlice(calls, 0, 7), testArrayConcat(testFormInputCalls, [ \
-        ['systemFetch', [{'url': 'createRun', 'body': jsonStringify(testRequest)}]] \
-    ]))
-    render = systemPartial(markowitzNewRunPage, args, testForm, 'The run failed.', false, testStocks, testGroups)
-    unittestDeepEqual(arraySlice(calls, 7), testPageCalls(render, data))
-endfunction
-unittestRunTest('testMarkowitzOnStartRun_error')
 
 
 #
@@ -1005,7 +1041,8 @@ function testMarkowitzGroupMinimumText():
     stocks = testPriceStocks(arrayNewSize(241, '2000-01'))
     unittestEqual( \
         markowitzGroupMinimumText({'name': 'Big', 'symbols': testStockSymbols(stocks)}, stocks), \
-        "**Note:** 241 of the group's 241 stocks have prices for 240 months (the most) - exclude stocks to run the group." \
+        "**Note:** This group can't be run - 241 of its 241 stocks have prices for 240 months (the most a run can have), " + \
+            "and a run can't have more stocks than months. Exclude at least 1 more stocks to run it." \
     )
     unittestEqual( \
         markowitzGroupMinimumText({'name': 'S&P 100', 'symbols': ['XYZ']}, testStocks), \
@@ -1552,12 +1589,6 @@ function testMarkowitzUpdateProgress():
     unittestDeepEqual(unittestMockEnd(), testUpdateProgressCalls('Stocks', null, 10, 12, '83', ', 1 failed'))
 endfunction
 unittestRunTest('testMarkowitzUpdateProgress')
-
-
-# Capture a window timeout's callback
-function testCaptureTimeout(callbacks, callback):
-    arrayPush(callbacks, callback)
-endfunction
 
 
 async function testMarkowitzUpdateProgress_timeoutBinding():
