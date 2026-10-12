@@ -1184,8 +1184,8 @@ unittestRunTest('testMarkowitzRunMinimumMonths')
 
 
 function testMarkowitzRunMinimumMonths_tooMany():
-    stocks = testPriceStocks(arrayNewSize(241, '2000-01'))
-    unittestDeepEqual(markowitzRunMinimumMonths(testStockSymbols(stocks), markowitzStockMap(stocks)), {'months': null, 'count': 241})
+    stocks = testPriceStocks(arrayNewSize(601, '1950-01'))
+    unittestDeepEqual(markowitzRunMinimumMonths(testStockSymbols(stocks), markowitzStockMap(stocks)), {'months': null, 'count': 601})
 endfunction
 unittestRunTest('testMarkowitzRunMinimumMonths_tooMany')
 
@@ -1195,10 +1195,10 @@ function testMarkowitzGroupMinimumText():
         markowitzGroupMinimumText(arrayGet(testMinimumGroups, 0), testMinimumStocks), \
         testMinimumText(12, 12, 13) \
     )
-    stocks = testPriceStocks(arrayNewSize(241, '2000-01'))
+    stocks = testPriceStocks(arrayNewSize(601, '1950-01'))
     unittestEqual( \
         markowitzGroupMinimumText({'name': 'Big', 'symbols': testStockSymbols(stocks)}, stocks), \
-        "**Note:** This group can't be run - 241 of its 241 stocks have prices for 240 months (the most a run can have), " + \
+        "**Note:** This group can't be run - 601 of its 601 stocks have prices for 600 months (the most a run can have), " + \
             "and a run can't have more stocks than months. Exclude at least 1 more stocks to run it." \
     )
     unittestEqual( \
@@ -1278,11 +1278,11 @@ function testMarkowitzRunFormUpdate_noChange():
     unittestDeepEqual(form, objectAssign(objectCopy(testForm), {'group': 'Gone', 'months': '6'}))
 
     # The months are the maximum if the group has too many stocks
-    stocks = testPriceStocks(arrayNewSize(241, '2000-01'))
+    stocks = testPriceStocks(arrayNewSize(601, '1950-01'))
     groups = [{'name': 'Big', 'symbols': testStockSymbols(stocks)}]
     form = objectAssign(objectCopy(testForm), {'group': 'Big'})
     markowitzRunFormUpdate(form, stocks, groups, true)
-    unittestEqual(objectGet(form, 'months'), '240')
+    unittestEqual(objectGet(form, 'months'), '600')
 endfunction
 unittestRunTest('testMarkowitzRunFormUpdate_noChange')
 

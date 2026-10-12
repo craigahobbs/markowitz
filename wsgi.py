@@ -33,8 +33,8 @@ for env_name, global_name in (
 # The globals passed to the backend - the static files, and the configuration and secrets
 APP_GLOBALS = {'markowitzStatics': APP_STATICS, **COUCH_GLOBALS}
 
-# The maximum number of BareScript statements per request (default is one billion) - the largest run (240 stocks over
-# 240 months) is about six billion statements, about 80 seconds
+# The maximum number of BareScript statements per request (default is one billion) - each of a run's portfolios is a
+# request (computeRunPortfolio), and a 240-stock portfolio is about one billion statements
 MAX_STATEMENTS = 1e10
 
 # Create the WSGI application - unless running the database administration command-line interface

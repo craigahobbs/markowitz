@@ -41,7 +41,7 @@ markowitzRunFormDefault = { \
 
 # The minimum and maximum number of months in a run's analysis period
 markowitzRunMonthsMin = 6
-markowitzRunMonthsMax = 240
+markowitzRunMonthsMax = 600
 
 # The stock symbols text input ID
 markowitzSymbolsInputID = 'markowitz-symbols'

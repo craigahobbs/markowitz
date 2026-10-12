@@ -383,7 +383,7 @@ markowitzTypes = schemaParse( \
     '        optional Month endMonth', \
     '', \
     '        # The number of months in the analysis period (default is 36)', \
-    '        optional int(>= 6, <= 240) months', \
+    '        optional int(>= 6, <= 600) months', \
     '', \
     '        # The number of months, following the analysis period, of the projection (default is 3)', \
     '        optional int(>= 1, <= 12) horizon', \

@@ -72,8 +72,8 @@ index's members (Yahoo Finance symbols, e.g. "BRK-B"):
 | S&P 100 | 101 |
 | S&P 500 | 503 |
 
-The S&P 500 is useful for updating prices, but can't be run whole - it has more stocks with long price histories than
-a run's maximum analysis period (240 months). Exclude stocks to run it.
+The S&P 500's minimum analysis period is long - 332 months, from 1999 - so its run has 332 stocks, and takes about a
+minute per target return's portfolio. A run shows its progress, a portfolio at a time.
 
 
 ## Running
