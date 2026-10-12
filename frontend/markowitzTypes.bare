@@ -111,19 +111,12 @@ markowitzTypes = schemaParse( \
     '        UnknownStock', \
     '', \
     '', \
-    '# Download stocks\' monthly prices and add or update them in the database - the stock symbols, the group\'s stocks,', \
-    '# and every stock in the database, if "all" is true', \
+    '# Download stocks\' monthly prices and add or update them in the database', \
     'action updateStocks', \
     '    input', \
     '', \
     '        # The stock symbols', \
-    '        optional Symbol[len > 0, len <= 50] symbols', \
-    '', \
-    '        # The stock group', \
-    '        optional GroupName group', \
-    '', \
-    '        # If true, update every stock in the database', \
-    '        optional bool all', \
+    '        Symbol[len > 0, len <= 50] symbols', \
     '', \
     '    output', \
     '', \
@@ -131,9 +124,6 @@ markowitzTypes = schemaParse( \
     '        StockUpdate[] results', \
     '', \
     '    errors (MarkowitzError)', \
-    '', \
-    '        # The group is unknown', \
-    '        UnknownGroup', \
     '', \
     '', \
     '# Delete a stock', \

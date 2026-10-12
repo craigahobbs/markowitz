@@ -67,7 +67,7 @@ async function markowitzAdminInit():
 
     # Download the groups' stocks' prices
     systemLog('Downloading ' + arrayLength(symbols) + ' stocks\' prices...')
-    results = objectGet(markowitzDownloadStocks(symbols), 'results')
+    results = objectGet(updateStocks({'symbols': symbols}), 'results')
     if results == null:
         systemLog('Failed to save the stocks')
         return 1

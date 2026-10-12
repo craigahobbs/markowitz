@@ -21,7 +21,7 @@ API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
 - Persistence is CouchDB - one database (default `http://127.0.0.1:5984/markowitz`) of `stock`, `group` (stock groups,
   e.g. "S&P 100"), and `run` documents. `wsgi.py` reads the `MARKOWITZ_COUCH_URL` and `MARKOWITZ_COUCH_CREDENTIALS`
   ("user:password") environment variables. Stock prices are downloaded from Yahoo Finance's chart API by the
-  `updateStocks` action - stock symbols, a group's stocks, or every stock.
+  `updateStocks` action - the frontend updates a group's stocks, or every stock, a chunk of symbols at a time.
 - `backend/markowitzAdmin.bare` - the database administration commands (`markowitzAdmin(args)`): `check`, `init`, and
   `reset`. `python3 wsgi.py check|init|reset` runs them with the same environment variables; the Makefile's `run`,
   `init`, and `reset` targets call it. Both save the built-in stock groups, `backend/markowitzGroups.json` (Yahoo

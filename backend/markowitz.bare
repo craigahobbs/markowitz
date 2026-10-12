@@ -70,38 +70,7 @@ endfunction
 
 
 async function updateStocks(request):
-    symbols = arrayCopy(objectGet(request, 'symbols', []))
-
-    # The group's stocks
-    groupName = objectGet(request, 'group')
-    if groupName != null:
-        group = markowitzDBGet(markowitzGroupID(groupName))
-        if group == null:
-            return markowitzUnknownGroup(groupName)
-        endif
-        arrayExtend(symbols, objectGet(group, 'symbols'))
-    endif
-
-    # Every stock in the database
-    if objectGet(request, 'all'):
-        docs = markowitzDBFind({'type': 'stock'}, ['symbol'])
-        if docs == null:
-            return markowitzDatabaseError()
-        endif
-        for doc in docs:
-            arrayPush(symbols, objectGet(doc, 'symbol'))
-        endfor
-    endif
-
-    return markowitzDownloadStocks(markowitzSymbols(symbols))
-endfunction
-
-
-# Download stocks' monthly prices and add or update them in the database - returns the updateStocks response
-async function markowitzDownloadStocks(symbols):
-    if !arrayLength(symbols):
-        return {'results': []}
-    endif
+    symbols = markowitzSymbols(objectGet(request, 'symbols'))
 
     # Download the stocks' monthly prices
     downloadRequests = []

@@ -91,7 +91,8 @@ doesn't exist. The application's pages:
   analysis period - are updated when the group, end month, or months change, and can be edited.
 - **Run** - the portfolios, the efficient frontier chart, the allocations, the stocks' statistics, and the excluded
   stocks and why they were excluded
-- **Stocks** - download and update stocks' prices: stock symbols, a group's stocks, or every stock
+- **Stocks** - download and update stocks' prices: stock symbols, a group's stocks, or every stock, showing the
+  update's progress
 - **Groups** - create, edit, and delete stock groups, and update a group's stocks
 
 The API documentation is at <http://127.0.0.1:8080/doc/>.

@@ -332,6 +332,12 @@ unittestRunTest('testGetStock_invalidInput')
 #
 
 
+# The test stock download request
+function testYahooRequest(symbol):
+    return {'url': testYahooURL(symbol), 'headers': {'User-Agent': 'Mozilla/5.0 (compatible; Markowitz)'}}
+endfunction
+
+
 async function testUpdateStocks():
     yahooFull = testYahooResponse({'longName': 'Test Corporation', 'shortName': 'Test Corp', 'currency': 'USD'})
     yahooShort = testYahooResponse({'shortName': 'Test Corp'})
@@ -390,7 +396,7 @@ async function testUpdateStocks():
     ]
     yahooRequests = []
     for symbol in ['IBM', 'KO', 'NEW', 'OLD', 'XYZ']:
-        arrayPush(yahooRequests, {'url': testYahooURL(symbol), 'headers': {'User-Agent': 'Mozilla/5.0 (compatible; Markowitz)'}})
+        arrayPush(yahooRequests, testYahooRequest(symbol))
     endfor
     unittestDeepEqual(unittestMockEnd(), [ \
         ['systemFetch', [yahooRequests]], \
@@ -436,86 +442,6 @@ async function testUpdateStocks_invalidInput():
     unittestDeepEqual(unittestMockEnd(), [])
 endfunction
 unittestRunTest('testUpdateStocks_invalidInput')
-
-
-# The test stock download request
-function testYahooRequest(symbol):
-    return {'url': testYahooURL(symbol), 'headers': {'User-Agent': 'Mozilla/5.0 (compatible; Markowitz)'}}
-endfunction
-
-
-async function testUpdateStocks_group():
-    group = {'_id': 'group:Test', '_rev': '1-abc', 'type': 'group', 'name': 'Test', 'symbols': ['IBM', 'KO']}
-    fetchData = {}
-    objectSet(fetchData, testCouchURL + '/group%3ATest', jsonStringify(group))
-    objectSet(fetchData, testCouchURL + '/_all_docs', jsonStringify({'rows': []}))
-    objectSet(fetchData, testCouchURL + '/_bulk_docs', '[]')
-    testMockAll({'systemFetch': fetchData})
-    unittestDeepEqual( \
-        testAction('POST', '/updateStocks', '', {'symbols': ['msft', 'ko'], 'group': 'Test'}), \
-        ['200 OK', {'results': [ \
-            {'symbol': 'IBM', 'error': 'Download failed - is "IBM" a Yahoo Finance symbol?'}, \
-            {'symbol': 'KO', 'error': 'Download failed - is "KO" a Yahoo Finance symbol?'}, \
-            {'symbol': 'MSFT', 'error': 'Download failed - is "MSFT" a Yahoo Finance symbol?'} \
-        ]}] \
-    )
-    unittestDeepEqual(unittestMockEnd(), [ \
-        testCouchCall('/group%3ATest'), \
-        ['systemFetch', [[testYahooRequest('IBM'), testYahooRequest('KO'), testYahooRequest('MSFT')]]], \
-        testCouchCall('/_all_docs', {'keys': ['stock:IBM', 'stock:KO', 'stock:MSFT']}), \
-        testCouchCall('/_bulk_docs', {'docs': []}) \
-    ])
-endfunction
-unittestRunTest('testUpdateStocks_group')
-
-
-async function testUpdateStocks_unknownGroup():
-    testMockAll({})
-    unittestDeepEqual( \
-        testAction('POST', '/updateStocks', '', {'group': 'Test'}), \
-        ['404 Not Found', {'error': 'UnknownGroup', 'message': 'Unknown group "Test"'}] \
-    )
-    unittestDeepEqual(unittestMockEnd(), [testCouchCall('/group%3ATest')])
-endfunction
-unittestRunTest('testUpdateStocks_unknownGroup')
-
-
-async function testUpdateStocks_all():
-    # Every stock in the database, sorted
-    stockDocs = [{'symbol': 'SC'}, {'symbol': 'SA'}, {'symbol': 'SB'}]
-    fetchData = {}
-    objectSet(fetchData, testCouchURL + '/_find', jsonStringify({'docs': stockDocs}))
-    objectSet(fetchData, testCouchURL + '/_all_docs', jsonStringify({'rows': []}))
-    objectSet(fetchData, testCouchURL + '/_bulk_docs', '[]')
-    testMockAll({'systemFetch': fetchData})
-    response = testAction('POST', '/updateStocks', '', {'all': true})
-    unittestEqual(arrayGet(response, 0), '200 OK')
-    unittestEqual(arrayLength(objectGet(arrayGet(response, 1), 'results')), 3)
-    calls = unittestMockEnd()
-    unittestEqual(arrayLength(calls), 4)
-    unittestDeepEqual(arrayGet(calls, 0), testCouchCall('/_find', {'selector': {'type': 'stock'}, 'fields': ['symbol'], 'limit': 100000}))
-    unittestDeepEqual(arrayGet(calls, 1), ['systemFetch', [[testYahooRequest('SA'), testYahooRequest('SB'), testYahooRequest('SC')]]])
-endfunction
-unittestRunTest('testUpdateStocks_all')
-
-
-async function testUpdateStocks_allError():
-    testMockAll({})
-    unittestDeepEqual( \
-        testAction('POST', '/updateStocks', '', {'all': true}), \
-        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
-    )
-    unittestEqual(arrayLength(unittestMockEnd()), 1)
-endfunction
-unittestRunTest('testUpdateStocks_allError')
-
-
-async function testUpdateStocks_none():
-    testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': []}))})
-    unittestDeepEqual(testAction('POST', '/updateStocks', '', {'all': true}), ['200 OK', {'results': []}])
-    unittestEqual(arrayLength(unittestMockEnd()), 1)
-endfunction
-unittestRunTest('testUpdateStocks_none')
 
 
 #
