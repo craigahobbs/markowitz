@@ -702,6 +702,9 @@ endfunction
 
 # Compute a running run's next portfolio - render the progress, or, if done (or failed), the run's page
 async function markowitzOnRunPortfolio(progress):
+    if objectGet(progress, 'stopped'):
+        return
+    endif
     response = markowitzFetch('computeRunPortfolio', {'id': objectGet(progress, 'id')})
     if response == null:
         markowitzRunProgressDone(progress, 'Computing the run\'s portfolio failed.')
@@ -717,8 +720,11 @@ async function markowitzOnRunPortfolio(progress):
 endfunction
 
 
-# Stop computing a running run's portfolios - render the run's page, where it can be continued
+# Stop computing a running run's portfolios - render the run's page, where it can be continued. The next portfolio's
+# window timeout may already be queued behind the click (MarkdownUp handles events one at a time, and clears only a
+# pending timeout), so the progress is marked stopped.
 async function markowitzOnRunStop(progress):
+    objectSet(progress, 'stopped', true)
     markowitzRunProgressDone(progress)
 endfunction
 
@@ -958,6 +964,9 @@ endfunction
 
 # Download and update a stock update's next chunk of stocks
 async function markowitzOnUpdateChunk(update):
+    if objectGet(update, 'stopped'):
+        return
+    endif
     symbols = objectGet(update, 'symbols')
     count = objectGet(update, 'count')
     chunk = arraySlice(symbols, count, mathMin(count + markowitzUpdateChunkSize, arrayLength(symbols)))
@@ -982,8 +991,11 @@ async function markowitzOnUpdateChunk(update):
 endfunction
 
 
-# Stop a stock update - render the page with the update's message
+# Stop a stock update - render the page with the update's message. The next chunk's window timeout may already be
+# queued behind the click (MarkdownUp handles events one at a time, and clears only a pending timeout), so the update
+# is marked stopped.
 async function markowitzOnUpdateStop(update):
+    objectSet(update, 'stopped', true)
     stoppedCount = arrayLength(objectGet(update, 'symbols')) - objectGet(update, 'count')
     pageFn = objectGet(update, 'pageFn')
     pageFn(markowitzUpdateMessage(objectGet(update, 'updated'), objectGet(update, 'failed'), stoppedCount))

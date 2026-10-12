@@ -1093,11 +1093,24 @@ unittestRunTest('testMarkowitzOnRunPortfolio_error')
 
 
 async function testMarkowitzOnRunStop():
+    progress = testRunProgress(1)
     unittestMockAll()
-    markowitzOnRunStop(testRunProgress(1))
+    markowitzOnRunStop(progress)
     unittestDeepEqual(unittestMockEnd(), [['windowSetLocation', ["#var.vId='r1'&var.vPage='run'"]]])
+    unittestEqual(objectGet(progress, 'stopped'), true)
 endfunction
 unittestRunTest('testMarkowitzOnRunStop')
+
+
+async function testMarkowitzOnRunPortfolio_stopped():
+    # The next portfolio's timeout was queued behind the Stop click - it does nothing
+    progress = testRunProgress(1)
+    objectSet(progress, 'stopped', true)
+    unittestMockAll({'systemFetch': {'computeRunPortfolio': jsonStringify({'portfolios': 2, 'targets': 3})}})
+    markowitzOnRunPortfolio(progress)
+    unittestDeepEqual(unittestMockEnd(), [])
+endfunction
+unittestRunTest('testMarkowitzOnRunPortfolio_stopped')
 
 
 async function testMarkowitzOnStartRunTimeout_error():
@@ -1809,8 +1822,21 @@ async function testMarkowitzOnUpdateStop():
     markowitzOnUpdateStop(update)
     message = 'Updated S0, S1. Stopped - 2 stocks were not updated.'
     unittestDeepEqual(unittestMockEnd(), testPageCalls(systemPartial(markowitzStocksPage, {'page': 'stocks'}, message), data))
+    unittestEqual(objectGet(update, 'stopped'), true)
 endfunction
 unittestRunTest('testMarkowitzOnUpdateStop')
+
+
+async function testMarkowitzOnUpdateChunk_stopped():
+    # The next chunk's timeout was queued behind the Stop click - it does nothing
+    update = testUpdate(testUpdateSymbols, 10)
+    objectSet(update, 'stopped', true)
+    unittestMockAll(testNewRunData())
+    markowitzOnUpdateChunk(update)
+    unittestDeepEqual(unittestMockEnd(), [])
+    unittestEqual(objectGet(update, 'count'), 10)
+endfunction
+unittestRunTest('testMarkowitzOnUpdateChunk_stopped')
 
 
 #
