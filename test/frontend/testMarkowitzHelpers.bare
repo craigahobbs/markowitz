@@ -63,3 +63,11 @@ endfunction
 function testCaptureTimeout(callbacks, callback):
     arrayPush(callbacks, callback)
 endfunction
+
+
+# A systemFetch mock that stops a stock update (or a run's progress) while its request is in progress - mock
+# "systemFetch" with "systemPartial(testStoppingFetch, stoppable, response)"
+function testStoppingFetch(stoppable, response):
+    objectSet(stoppable, 'stopped', true)
+    return response
+endfunction

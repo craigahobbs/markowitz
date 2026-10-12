@@ -706,7 +706,9 @@ async function markowitzOnRunPortfolio(progress):
         return
     endif
     response = markowitzFetch('computeRunPortfolio', {'id': objectGet(progress, 'id')})
-    if response == null:
+    if objectGet(progress, 'stopped'):
+        return
+    elif response == null:
         markowitzRunProgressDone(progress, 'Computing the run\'s portfolio failed.')
         return
     endif
@@ -720,9 +722,9 @@ async function markowitzOnRunPortfolio(progress):
 endfunction
 
 
-# Stop computing a running run's portfolios - render the run's page, where it can be continued. The next portfolio's
-# window timeout may already be queued behind the click (MarkdownUp handles events one at a time, and clears only a
-# pending timeout), so the progress is marked stopped.
+# Stop computing a running run's portfolios - render the run's page, where it can be continued. The progress is
+# marked stopped, so that the portfolio being computed (MarkdownUp doesn't queue a click behind a window timeout's
+# callback), or the next portfolio's already-queued window timeout, renders and schedules nothing.
 async function markowitzOnRunStop(progress):
     objectSet(progress, 'stopped', true)
     markowitzRunProgressDone(progress)
@@ -978,6 +980,9 @@ async function markowitzOnUpdateChunk(update):
     else:
         markowitzUpdateResults(objectGet(response, 'results'), objectGet(update, 'updated'), objectGet(update, 'failed'))
     endif
+    if objectGet(update, 'stopped'):
+        return
+    endif
 
     # Render the progress and schedule the next chunk - or, if done, render the page
     count = count + arrayLength(chunk)
@@ -991,9 +996,9 @@ async function markowitzOnUpdateChunk(update):
 endfunction
 
 
-# Stop a stock update - render the page with the update's message. The next chunk's window timeout may already be
-# queued behind the click (MarkdownUp handles events one at a time, and clears only a pending timeout), so the update
-# is marked stopped.
+# Stop a stock update - render the page with the update's message. The update is marked stopped, so that the chunk
+# being downloaded (MarkdownUp doesn't queue a click behind a window timeout's callback), or the next chunk's
+# already-queued window timeout, renders and schedules nothing.
 async function markowitzOnUpdateStop(update):
     objectSet(update, 'stopped', true)
     stoppedCount = arrayLength(objectGet(update, 'symbols')) - objectGet(update, 'count')

@@ -1102,6 +1102,21 @@ endfunction
 unittestRunTest('testMarkowitzOnRunStop')
 
 
+async function testMarkowitzOnRunPortfolio_stoppedDuring():
+    # Stop is clicked while the portfolio is computed - nothing is rendered or scheduled
+    # (unittestMockOne doesn't record calls - the generic mocks record any render or schedule)
+    progress = testRunProgress(1)
+    unittestMockOne('systemFetch', systemPartial(testStoppingFetch, progress, jsonStringify({'portfolios': 2, 'targets': 3})))
+    unittestMockOneGeneric('windowSetTimeout')
+    unittestMockOneGeneric('windowSetLocation')
+    unittestMockOneGeneric('markdownPrint')
+    markowitzOnRunPortfolio(progress)
+    unittestDeepEqual(unittestMockEnd(), [])
+    unittestEqual(objectGet(progress, 'count'), 1)
+endfunction
+unittestRunTest('testMarkowitzOnRunPortfolio_stoppedDuring')
+
+
 async function testMarkowitzOnRunPortfolio_stopped():
     # The next portfolio's timeout was queued behind the Stop click - it does nothing
     progress = testRunProgress(1)
@@ -1825,6 +1840,19 @@ async function testMarkowitzOnUpdateStop():
     unittestEqual(objectGet(update, 'stopped'), true)
 endfunction
 unittestRunTest('testMarkowitzOnUpdateStop')
+
+
+async function testMarkowitzOnUpdateChunk_stoppedDuring():
+    # Stop is clicked while the chunk downloads - the chunk renders and schedules nothing
+    update = testUpdate(testUpdateSymbols, 10)
+    response = jsonStringify({'results': [{'symbol': 'S10', 'stock': arrayGet(testStocks, 0)}]})
+    unittestMockOne('systemFetch', systemPartial(testStoppingFetch, update, response))
+    markowitzOnUpdateChunk(update)
+    unittestMockEnd()
+    unittestEqual(objectGet(update, 'count'), 10)
+    unittestDeepEqual(objectGet(update, 'updated'), ['S10'])
+endfunction
+unittestRunTest('testMarkowitzOnUpdateChunk_stoppedDuring')
 
 
 async function testMarkowitzOnUpdateChunk_stopped():
