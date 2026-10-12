@@ -72,8 +72,8 @@ index's members (Yahoo Finance symbols, e.g. "BRK-B"):
 | S&P 100 | 101 |
 | S&P 500 | 503 |
 
-The S&P 500's minimum analysis period is long - 332 months, from 1999 - so its run has 332 stocks, and takes about a
-minute per target return's portfolio. A run shows its progress, a portfolio at a time.
+The S&P 500's minimum analysis period is long - 332 months, from 1999 - so its run has 332 stocks, and takes about two
+seconds per target return's portfolio. A run shows its progress, a portfolio at a time.
 
 
 ## Running

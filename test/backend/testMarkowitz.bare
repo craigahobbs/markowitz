@@ -1377,6 +1377,16 @@ endfunction
 unittestRunTest('testMarkowitzAnalyze_noHorizon')
 
 
+function testMarkowitzPortfolio_singular():
+    # Two identical stocks - the system is singular, with no stock deleted
+    unittestDeepEqual( \
+        markowitzPortfolio(['A', 'B'], [[4, 4], [4, 4]], [1, 1], [null, null], 3, 10), \
+        {'target': 10, 'solved': false, 'allocations': [], 'deleted': [], 'deletedWeights': []} \
+    )
+endfunction
+unittestRunTest('testMarkowitzPortfolio_singular')
+
+
 function testMarkowitzAnnualReturn():
     unittestEqual(markowitzAnnualReturn(1, 12), 0)
     unittestEqual(mathRound(markowitzAnnualReturn(1.01, 12) * 1e6) / 1e6, 12.682503)
@@ -1385,29 +1395,50 @@ endfunction
 unittestRunTest('testMarkowitzAnnualReturn')
 
 
-function testMarkowitzSolve():
-    # 2x + y = 5, x + 3y = 10 - the second row pivots
-    unittestDeepEqual(testRound(markowitzSolve([[2, 1, 5], [1, 3, 10]])), [1, 3])
+function testMarkowitzInvert():
+    # The second row pivots - [[2, 1], [1, 3]]'s inverse is [[3, -1], [-1, 2]] / 5
+    unittestDeepEqual(testRound(markowitzInvert([[2, 1], [1, 3]])), [[0.6, -0.2], [-0.2, 0.4]])
 
-    # The first column's pivot is in the last row
-    unittestDeepEqual(testRound(markowitzSolve([[0, 1, 2], [1, 0, 3]])), [3, 2])
+    # The first column's pivot is in the last row - a row interchange, undone as a column interchange
+    unittestDeepEqual(testRound(markowitzInvert([[0, 1], [1, 0]])), [[0, 1], [1, 0]])
+    unittestDeepEqual(testRound(markowitzInvert([[0, 2, 0], [1, 0, 0], [0, 0, 4]])), [[0, 1, 0], [0.5, 0, 0], [0, 0, 0.25]])
 endfunction
-unittestRunTest('testMarkowitzSolve')
+unittestRunTest('testMarkowitzInvert')
 
 
-function testMarkowitzSolve_singular():
-    unittestEqual(markowitzSolve([[1, 2, 3], [2, 4, 6]]), null)
+function testMarkowitzInvert_singular():
+    unittestEqual(markowitzInvert([[1, 2], [2, 4]]), null)
 endfunction
-unittestRunTest('testMarkowitzSolve_singular')
+unittestRunTest('testMarkowitzInvert_singular')
+
+
+function testMarkowitzInverseDelete():
+    # Deleting index 1 of [[4, 1, 2], [1, 3, 0], [2, 0, 5]] leaves the inverse of [[4, 2], [2, 5]] - [[5, -2], [-2, 4]] / 16
+    inverse = markowitzInvert([[4, 1, 2], [1, 3, 0], [2, 0, 5]])
+    unittestEqual(markowitzInverseDelete(inverse, [0, 2], 1), true)
+    unittestDeepEqual( \
+        testRound([[arrayGet(arrayGet(inverse, 0), 0), arrayGet(arrayGet(inverse, 0), 2)], [arrayGet(arrayGet(inverse, 2), 0), arrayGet(arrayGet(inverse, 2), 2)]]), \
+        [[0.3125, -0.125], [-0.125, 0.25]] \
+    )
+endfunction
+unittestRunTest('testMarkowitzInverseDelete')
+
+
+function testMarkowitzInverseDelete_singular():
+    # Without index 0, [[1, 1], [1, 0]] leaves [[0]] - singular
+    inverse = markowitzInvert([[1, 1], [1, 0]])
+    unittestEqual(markowitzInverseDelete(inverse, [1], 0), false)
+endfunction
+unittestRunTest('testMarkowitzInverseDelete_singular')
 
 
 function testMarkowitzSystem():
     covariance = [[4, 1, 2], [1, 9, 3], [2, 3, 16]]
-    unittestDeepEqual(markowitzSystem(covariance, [1, 2, 3], [0, 2], 1.5), [ \
-        [4, 2, 1, 1, 0], \
-        [2, 16, 3, 1, 0], \
-        [1, 3, 0, 0, 1.5], \
-        [1, 1, 0, 0, 1] \
+    unittestDeepEqual(markowitzSystem(covariance, [1, 2, 3], [0, 2]), [ \
+        [4, 2, 1, 1], \
+        [2, 16, 3, 1], \
+        [1, 3, 0, 0], \
+        [1, 1, 0, 0] \
     ])
 endfunction
 unittestRunTest('testMarkowitzSystem')

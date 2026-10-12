@@ -677,28 +677,42 @@ function markowitzAnnualReturn(growth, periodsPerYear):
 endfunction
 
 
-# Compute a target annual return's minimum-variance portfolio. Solve for the weights that minimize the variance with
-# the target return and weights that sum to one (the Lagrangian's linear system). If a weight is negative, delete its
-# stock (the most negative) and solve again.
+# Compute a target annual return's minimum-variance portfolio. The weights that minimize the variance, with the target
+# return and weights that sum to one, solve the Lagrangian's linear system - the covariance matrix bordered by the
+# expected returns and ones, with the right-hand side zeros, the target return, and one. If a weight is negative, delete
+# its stock (the most negative) and solve again. The system's matrix is inverted once - the weights are its inverse's
+# last two columns, scaled by the target return and one - and a deleted stock's row and column are removed from the
+# inverse (an O(n^2) update, rather than an O(n^3) solve).
 function markowitzPortfolio(symbols, covariance, expected, growths, horizon, target):
     targetMonthly = ((1 + target / 100) ** (1 / 12) - 1) * 100
+    stockCount = arrayLength(symbols)
     stockIndexes = []
-    while arrayLength(stockIndexes) < arrayLength(symbols):
+    while arrayLength(stockIndexes) < stockCount:
         arrayPush(stockIndexes, arrayLength(stockIndexes))
     endwhile
     deleted = []
     deletedWeights = []
+    unsolved = {'target': target, 'solved': false, 'allocations': [], 'deleted': deleted, 'deletedWeights': deletedWeights}
+    inverse = markowitzInvert(markowitzSystem(covariance, expected, stockIndexes))
+    if inverse == null:
+        return unsolved
+    endif
+
+    # The inverse's rows and columns - the stocks not deleted, and the two constraints
+    active = arrayCopy(stockIndexes)
+    arrayPush(active, stockCount, stockCount + 1)
     while true:
-        weights = markowitzSolve(markowitzSystem(covariance, expected, stockIndexes, targetMonthly))
-        if weights == null:
-            return {'target': target, 'solved': false, 'allocations': [], 'deleted': deleted, 'deletedWeights': deletedWeights}
-        endif
+        # The weights
+        weights = []
+        for stockIndex in stockIndexes:
+            inverseRow = arrayGet(inverse, stockIndex)
+            arrayPush(weights, targetMonthly * arrayGet(inverseRow, stockCount) + arrayGet(inverseRow, stockCount + 1))
+        endfor
 
         # Find the most negative weight - if none, done
         ixMinimum = null
         weightMinimum = 0
-        for stockIndex, ixIndex in stockIndexes:
-            weight = arrayGet(weights, ixIndex)
+        for weight, ixIndex in weights:
             if weight < weightMinimum:
                 weightMinimum = weight
                 ixMinimum = ixIndex
@@ -708,10 +722,15 @@ function markowitzPortfolio(symbols, covariance, expected, growths, horizon, tar
             break
         endif
 
-        # Delete the stock from the portfolio
-        arrayPush(deleted, arrayGet(symbols, arrayGet(stockIndexes, ixMinimum)))
+        # Delete the stock from the portfolio, and its row and column from the inverse
+        stockIndex = arrayGet(stockIndexes, ixMinimum)
+        arrayPush(deleted, arrayGet(symbols, stockIndex))
         arrayPush(deletedWeights, weightMinimum)
         arrayDelete(stockIndexes, ixMinimum)
+        arrayDelete(active, ixMinimum)
+        if !markowitzInverseDelete(inverse, active, stockIndex):
+            return unsolved
+        endif
     endwhile
 
     # The portfolio's allocations, variance, and realized return
@@ -743,9 +762,8 @@ function markowitzPortfolio(symbols, covariance, expected, growths, horizon, tar
 endfunction
 
 
-# Create the augmented matrix of the portfolio's linear system - the covariance matrix bordered by the expected
-# returns and ones, with the right-hand side zeros, the target return, and one
-function markowitzSystem(covariance, expected, stockIndexes, targetMonthly):
+# Create the matrix of the portfolio's linear system - the covariance matrix bordered by the expected returns and ones
+function markowitzSystem(covariance, expected, stockIndexes):
     matrix = []
     expectedRow = []
     onesRow = []
@@ -755,23 +773,24 @@ function markowitzSystem(covariance, expected, stockIndexes, targetMonthly):
         for stockIndexJ in stockIndexes:
             arrayPush(row, arrayGet(covarianceRow, stockIndexJ))
         endfor
-        arrayPush(row, arrayGet(expected, stockIndex), 1, 0)
+        arrayPush(row, arrayGet(expected, stockIndex), 1)
         arrayPush(matrix, row)
         arrayPush(expectedRow, arrayGet(expected, stockIndex))
         arrayPush(onesRow, 1)
     endfor
-    arrayPush(expectedRow, 0, 0, targetMonthly)
-    arrayPush(onesRow, 0, 0, 1)
+    arrayPush(expectedRow, 0, 0)
+    arrayPush(onesRow, 0, 0)
     arrayPush(matrix, expectedRow, onesRow)
     return matrix
 endfunction
 
 
-# Solve a linear system's augmented matrix, in place, with Gauss-Jordan elimination and partial pivoting - returns
-# the solution array, or null if the matrix is singular ("D WAS ZERO, NO SOLUTION")
-function markowitzSolve(matrix):
+# Invert a matrix, in place, with Gauss-Jordan elimination and partial pivoting - returns the inverse, or null if the
+# matrix is singular ("D WAS ZERO, NO SOLUTION"). Each pivot column becomes the inverse's column, so the row
+# interchanges are undone as column interchanges, in reverse order (Numerical Recipes' "gaussj").
+function markowitzInvert(matrix):
     size = arrayLength(matrix)
-    columnCount = size + 1
+    pivotIndexes = []
     ixColumn = 0
     while ixColumn < size:
         # Find the pivot row - the first row with the column's largest magnitude
@@ -789,28 +808,25 @@ function markowitzSolve(matrix):
         if pivotMagnitude < markowitzSingularEpsilon:
             return null
         endif
+        arrayPush(pivotIndexes, ixPivot)
 
-        # Swap the pivot row into place and normalize it - its prior columns are zero. The pivot column is never read
-        # again (its pivot row value would be one and its other rows' zero), so it's skipped.
+        # Swap the pivot row into place and normalize it
         pivotRow = arrayGet(matrix, ixPivot)
         arraySet(matrix, ixPivot, arrayGet(matrix, ixColumn))
         arraySet(matrix, ixColumn, pivotRow)
-        pivot = arrayGet(pivotRow, ixColumn)
-        ixValue = ixColumn + 1
-        while ixValue < columnCount:
-            arraySet(pivotRow, ixValue, arrayGet(pivotRow, ixValue) / pivot)
-            ixValue = ixValue + 1
-        endwhile
+        pivotInverse = 1 / arrayGet(pivotRow, ixColumn)
+        arraySet(pivotRow, ixColumn, 1)
+        for value, ixValue in pivotRow:
+            arraySet(pivotRow, ixValue, value * pivotInverse)
+        endfor
 
         # Eliminate the column from the other rows
-        pivotValues = arraySlice(pivotRow, ixColumn + 1)
         for row, ixRow in matrix:
             factor = arrayGet(row, ixColumn)
             if ixRow != ixColumn && factor != 0:
-                ixValue = ixColumn + 1
-                for pivotValue in pivotValues:
+                arraySet(row, ixColumn, 0)
+                for pivotValue, ixValue in pivotRow:
                     arraySet(row, ixValue, arrayGet(row, ixValue) - factor * pivotValue)
-                    ixValue = ixValue + 1
                 endfor
             endif
         endfor
@@ -818,12 +834,46 @@ function markowitzSolve(matrix):
         ixColumn = ixColumn + 1
     endwhile
 
-    # The solution is the right-hand side column
-    solution = []
-    for row in matrix:
-        arrayPush(solution, arrayGet(row, size))
+    # Undo the row interchanges as column interchanges, in reverse order
+    ixColumn = size - 1
+    while ixColumn >= 0:
+        ixPivot = arrayGet(pivotIndexes, ixColumn)
+        if ixPivot != ixColumn:
+            for row in matrix:
+                value = arrayGet(row, ixPivot)
+                arraySet(row, ixPivot, arrayGet(row, ixColumn))
+                arraySet(row, ixColumn, value)
+            endfor
+        endif
+        ixColumn = ixColumn - 1
+    endwhile
+    return matrix
+endfunction
+
+
+# Remove an index's row and column from a symmetric matrix's inverse, in place - the inverse's other active rows and
+# columns become the inverse of the matrix without the index's row and column. Returns false if that matrix is singular
+# - the index's diagonal value is zero, relative to its row.
+function markowitzInverseDelete(inverse, active, index):
+    indexRow = arrayGet(inverse, index)
+    diagonal = arrayGet(indexRow, index)
+    rowMagnitude = mathAbs(diagonal)
+    for ixValue in active:
+        rowMagnitude = mathMax(rowMagnitude, mathAbs(arrayGet(indexRow, ixValue)))
     endfor
-    return solution
+    if mathAbs(diagonal) < markowitzSingularEpsilon * rowMagnitude:
+        return false
+    endif
+    for ixRow in active:
+        row = arrayGet(inverse, ixRow)
+        factor = arrayGet(row, index) / diagonal
+        if factor != 0:
+            for ixValue in active:
+                arraySet(row, ixValue, arrayGet(row, ixValue) - factor * arrayGet(indexRow, ixValue))
+            endfor
+        endif
+    endfor
+    return true
 endfunction
 
 

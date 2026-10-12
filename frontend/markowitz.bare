@@ -665,7 +665,7 @@ async function markowitzOnStartRun(args, stocks, groups, group):
     # Render the running run's page, and start the run in a window timeout so the page renders first
     markowitzHeader('New Run', null)
     markdownPrint( \
-        '**Running "' + markdownEscape(objectGet(form, 'name')) + '"...** A run of many stocks can take a few minutes.', \
+        '**Running "' + markdownEscape(objectGet(form, 'name')) + '"...** A run of many stocks can take a minute.', \
         '' \
     )
     windowSetTimeout(systemPartial(markowitzOnStartRunTimeout, args, form, objectGet(requestResult, 'request'), stocks, groups), 0)
@@ -705,7 +705,7 @@ function markowitzRunProgress(progress):
     markowitzHeader(objectGet(progress, 'name'), null)
     markdownPrint( \
         '**Running...** Computed ' + count + ' of ' + total + ' portfolios (' + numberToFixed(100 * count / total, 0) + \
-            '%). A run of many stocks can take a few minutes.', \
+            '%). A run of many stocks can take a minute.', \
         '' \
     )
     elementModelRender({'html': 'p', 'elem': [ \

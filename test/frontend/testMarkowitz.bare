@@ -98,7 +98,7 @@ function testRunProgressCalls(name, count, total, percent):
     arrayPush(calls, \
         ['markdownPrint', [ \
             '**Running...** Computed ' + count + ' of ' + total + ' portfolios (' + percent + '%). A run of many stocks can ' + \
-                'take a few minutes.', \
+                'take a minute.', \
             '' \
         ]], \
         ['elementModelRender', [{'html': 'p', 'elem': [ \
@@ -980,7 +980,7 @@ unittestRunTest('testMarkowitzOnRunPeriodChange')
 function testRunningCalls(name):
     calls = testHeaderCalls('New Run', 'New Run')
     arrayPush(calls, \
-        ['markdownPrint', ['**Running "' + name + '"...** A run of many stocks can take a few minutes.', '']], \
+        ['markdownPrint', ['**Running "' + name + '"...** A run of many stocks can take a minute.', '']], \
         ['windowSetTimeout', ['<function>', 0]] \
     )
     return calls
