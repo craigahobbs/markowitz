@@ -163,17 +163,7 @@ endfunction
 
 async function deleteStock(request):
     symbol = stringUpper(objectGet(request, 'symbol'))
-    id = markowitzStockID(symbol)
-    revs = markowitzDBRevs([id])
-    if revs == null:
-        return markowitzDatabaseError()
-    endif
-    if !objectHas(revs, id):
-        return markowitzUnknownStock(symbol)
-    endif
-    if !markowitzDBDelete(id, objectGet(revs, id)):
-        return markowitzDatabaseError()
-    endif
+    return markowitzDeleteDoc(markowitzStockID(symbol), markowitzUnknownStock(symbol))
 endfunction
 
 
@@ -233,17 +223,7 @@ endfunction
 
 async function deleteGroup(request):
     name = objectGet(request, 'name')
-    id = markowitzGroupID(name)
-    revs = markowitzDBRevs([id])
-    if revs == null:
-        return markowitzDatabaseError()
-    endif
-    if !objectHas(revs, id):
-        return markowitzUnknownGroup(name)
-    endif
-    if !markowitzDBDelete(id, objectGet(revs, id)):
-        return markowitzDatabaseError()
-    endif
+    return markowitzDeleteDoc(markowitzGroupID(name), markowitzUnknownGroup(name))
 endfunction
 
 
@@ -262,8 +242,8 @@ endfunction
 
 async function getRun(request):
     id = objectGet(request, 'id')
-    doc = markowitzDBGet(id)
-    if doc == null || objectGet(doc, 'type') != 'run':
+    doc = markowitzRunGet(id)
+    if doc == null:
         return markowitzUnknownRun(id)
     endif
     run = markowitzRunInfo(doc)
@@ -370,8 +350,8 @@ endfunction
 
 async function computeRunPortfolio(request):
     id = objectGet(request, 'id')
-    doc = markowitzDBGet(id)
-    if doc == null || objectGet(doc, 'type') != 'run':
+    doc = markowitzRunGet(id)
+    if doc == null:
         return markowitzUnknownRun(id)
     endif
     if !objectGet(doc, 'running'):
@@ -404,8 +384,8 @@ endfunction
 
 async function deleteRun(request):
     id = objectGet(request, 'id')
-    doc = markowitzDBGet(id)
-    if doc == null || objectGet(doc, 'type') != 'run':
+    doc = markowitzRunGet(id)
+    if doc == null:
         return markowitzUnknownRun(id)
     endif
     if !markowitzDBDelete(id, objectGet(doc, '_rev')):
@@ -446,27 +426,26 @@ endfunction
 
 # Get a stock document's summary
 function markowitzStockInfo(doc):
-    info = {}
-    for field in markowitzStockInfoFields:
-        value = objectGet(doc, field)
-        if value != null:
-            objectSet(info, field, value)
-        endif
-    endfor
-    return info
+    return markowitzDocFields(doc, markowitzStockInfoFields)
 endfunction
 
 
-# Get a run document's summary
+# Get a run document's summary - its ID, and its run summary fields (after "_id")
 function markowitzRunInfo(doc):
-    info = {'id': objectGet(doc, '_id')}
-    for field in arraySlice(markowitzRunInfoFields, 1):
+    return objectAssign({'id': objectGet(doc, '_id')}, markowitzDocFields(doc, arraySlice(markowitzRunInfoFields, 1)))
+endfunction
+
+
+# Get a document's fields that aren't null
+function markowitzDocFields(doc, fields):
+    values = {}
+    for field in fields:
         value = objectGet(doc, field)
         if value != null:
-            objectSet(info, field, value)
+            objectSet(values, field, value)
         endif
     endfor
-    return info
+    return values
 endfunction
 
 
@@ -884,6 +863,30 @@ endfunction
 #
 # CouchDB database helpers
 #
+
+
+# Get a run document - null if it doesn't exist (or on failure), or isn't a run
+async function markowitzRunGet(id):
+    doc = markowitzDBGet(id)
+    return if(doc != null && objectGet(doc, 'type') == 'run', doc)
+endfunction
+
+
+# Delete a document, if it exists - returns null on success, or the error response (the unknown error response if it
+# doesn't exist)
+async function markowitzDeleteDoc(id, unknownError):
+    revs = markowitzDBRevs([id])
+    if revs == null:
+        return markowitzDatabaseError()
+    endif
+    if !objectHas(revs, id):
+        return unknownError
+    endif
+    if !markowitzDBDelete(id, objectGet(revs, id)):
+        return markowitzDatabaseError()
+    endif
+    return null
+endfunction
 
 
 # Get a document - null if it doesn't exist (or on failure)

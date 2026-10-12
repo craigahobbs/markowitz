@@ -368,10 +368,6 @@ async function markowitzNewRunPage(args, form, message, selecting, stocks, group
             for target in objectGet(run, 'targets'):
                 arrayPush(targets, stringNew(target))
             endfor
-            exclude = []
-            for exclusion in objectGet(run, 'excluded', []):
-                arrayPush(exclude, objectGet(exclusion, 'symbol'))
-            endfor
             objectAssign(form, { \
                 'name': objectGet(run, 'name'), \
                 'group': objectGet(run, 'group', ''), \
@@ -379,7 +375,7 @@ async function markowitzNewRunPage(args, form, message, selecting, stocks, group
                 'months': stringNew(objectGet(run, 'months')), \
                 'horizon': stringNew(objectGet(run, 'horizon')), \
                 'targets': arrayJoin(targets, ', '), \
-                'exclude': arrayJoin(exclude, ' ') \
+                'exclude': arrayJoin(markowitzSymbolList(objectGet(run, 'excluded', [])), ' ') \
             })
         elif objectHas(args, 'group') && stocks != null && groups != null:
             objectSet(form, 'group', objectGet(args, 'group'))
@@ -539,13 +535,7 @@ endfunction
 # The stock group's stocks without prices warning Markdown text - null if every stock has prices
 function markowitzGroupMissingText(group, stocks):
     symbols = objectGet(group, 'symbols')
-    stockMap = markowitzStockMap(stocks)
-    missingCount = 0
-    for symbol in symbols:
-        if !objectHas(stockMap, symbol):
-            missingCount = missingCount + 1
-        endif
-    endfor
+    missingCount = arrayLength(markowitzMissingSymbols(symbols, stocks))
     if !missingCount:
         return null
     endif
@@ -600,11 +590,8 @@ function markowitzRunFormUpdate(form, stocks, groups, selected):
 
     # Exclude the stocks without a price for every month of the analysis period
     if months != null:
-        exclude = []
-        for exclusion in objectGet(markowitzRunSelect(symbols, stockMap, endIndex, months), 'excluded'):
-            arrayPush(exclude, objectGet(exclusion, 'symbol'))
-        endfor
-        objectSet(form, 'exclude', arrayJoin(exclude, ' '))
+        excluded = objectGet(markowitzRunSelect(symbols, stockMap, endIndex, months), 'excluded')
+        objectSet(form, 'exclude', arrayJoin(markowitzSymbolList(excluded), ' '))
     endif
 endfunction
 
@@ -708,11 +695,7 @@ function markowitzRunProgress(progress):
             '%). A run of many stocks can take a minute.', \
         '' \
     )
-    elementModelRender({'html': 'p', 'elem': [ \
-        {'html': 'progress', 'attr': {'max': total, 'value': count, 'style': 'width: 30em; max-width: 100%;'}}, \
-        {'text': ' '}, \
-        formsLinkButtonElements('Stop', systemPartial(markowitzOnRunStop, progress)) \
-    ]})
+    elementModelRender(markowitzProgressElements(count, total, systemPartial(markowitzOnRunStop, progress)))
     windowSetTimeout(systemPartial(markowitzOnRunPortfolio, progress), 0)
 endfunction
 
@@ -854,11 +837,8 @@ async function markowitzStocksPage(args, message):
         formsLinkButtonElements('Add / Update', systemPartial(markowitzOnUpdateStocks, args, null)) \
     ]
     if arrayLength(stocks):
-        symbols = []
-        for stock in stocks:
-            arrayPush(symbols, objectGet(stock, 'symbol'))
-        endfor
-        arrayPush(controls, {'text': ' | '}, formsLinkButtonElements('Update All', systemPartial(markowitzOnUpdateStocks, args, symbols)))
+        arrayPush(controls, {'text': ' | '}, \
+            formsLinkButtonElements('Update All', systemPartial(markowitzOnUpdateStocks, args, markowitzSymbolList(stocks))))
     endif
     elementModelRender({'html': 'p', 'elem': controls})
 
@@ -971,11 +951,7 @@ function markowitzUpdateProgress(update):
             if(failedCount, ', ' + failedCount + ' failed', ''), \
         '' \
     )
-    elementModelRender({'html': 'p', 'elem': [ \
-        {'html': 'progress', 'attr': {'max': total, 'value': count, 'style': 'width: 30em; max-width: 100%;'}}, \
-        {'text': ' '}, \
-        formsLinkButtonElements('Stop', systemPartial(markowitzOnUpdateStop, update)) \
-    ]})
+    elementModelRender(markowitzProgressElements(count, total, systemPartial(markowitzOnUpdateStop, update)))
     windowSetTimeout(systemPartial(markowitzOnUpdateChunk, update), 0)
 endfunction
 
@@ -1174,16 +1150,7 @@ async function markowitzGroupPage(args, message):
     stocks = objectGet(response, 'stocks')
 
     # The group's summary and actions
-    stockSymbols = []
-    for stock in stocks:
-        arrayPush(stockSymbols, objectGet(stock, 'symbol'))
-    endfor
-    missing = []
-    for symbol in symbols:
-        if arrayIndexOf(stockSymbols, symbol) == -1:
-            arrayPush(missing, symbol)
-        endif
-    endfor
+    missing = markowitzMissingSymbols(symbols, stocks)
     markowitzHeader(name, {'page': 'groups'})
     markowitzMessage(message)
     markdownPrint('- **Stocks:** ' + arrayLength(symbols))
@@ -1301,6 +1268,39 @@ function markowitzStocksTable(stocks):
         'fields': ['Stock', 'Name', 'First Month', 'Last Month', 'Months', 'Updated'], \
         'formats': {'Stock': {'markdown': true}, 'Months': {'align': 'right'}} \
     })
+endfunction
+
+
+# Get the symbols of an array of objects with a "symbol" (e.g. stocks or exclusions)
+function markowitzSymbolList(items):
+    symbols = []
+    for item in items:
+        arrayPush(symbols, objectGet(item, 'symbol'))
+    endfor
+    return symbols
+endfunction
+
+
+# Get the symbols without a stock (with prices)
+function markowitzMissingSymbols(symbols, stocks):
+    stockMap = markowitzStockMap(stocks)
+    missing = []
+    for symbol in symbols:
+        if !objectHas(stockMap, symbol):
+            arrayPush(missing, symbol)
+        endif
+    endfor
+    return missing
+endfunction
+
+
+# A progress bar, and its Stop button, element model
+function markowitzProgressElements(count, total, onStop):
+    return {'html': 'p', 'elem': [ \
+        {'html': 'progress', 'attr': {'max': total, 'value': count, 'style': 'width: 30em; max-width: 100%;'}}, \
+        {'text': ' '}, \
+        formsLinkButtonElements('Stop', onStop) \
+    ]}
 endfunction
 
 

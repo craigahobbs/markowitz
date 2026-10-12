@@ -2316,6 +2316,20 @@ unittestRunTest('testMarkowitzOnDeleteGroup_error')
 #
 
 
+function testMarkowitzSymbolList():
+    unittestDeepEqual(markowitzSymbolList(testStocks), ['IBM', 'KO'])
+    unittestDeepEqual(markowitzSymbolList([]), [])
+endfunction
+unittestRunTest('testMarkowitzSymbolList')
+
+
+function testMarkowitzMissingSymbols():
+    unittestDeepEqual(markowitzMissingSymbols(['MSFT', 'IBM', 'XYZ', 'KO'], testStocks), ['MSFT', 'XYZ'])
+    unittestDeepEqual(markowitzMissingSymbols(['IBM'], testStocks), [])
+endfunction
+unittestRunTest('testMarkowitzMissingSymbols')
+
+
 function testMarkowitzParseList():
     unittestDeepEqual(markowitzParseList(''), [])
     unittestDeepEqual(markowitzParseList(' , '), [])
