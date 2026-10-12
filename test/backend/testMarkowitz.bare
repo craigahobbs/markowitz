@@ -473,31 +473,20 @@ unittestRunTest('testUpdateStocks_unknownGroup')
 
 
 async function testUpdateStocks_all():
-    # Twelve stocks - downloaded in two batches
-    symbols = []
-    stockDocs = []
-    while arrayLength(symbols) < 12:
-        symbol = 'S' + stringFromCharCode(65 + arrayLength(symbols))
-        arrayPush(symbols, symbol)
-        arrayPush(stockDocs, {'symbol': symbol})
-    endwhile
+    # Every stock in the database, sorted
+    stockDocs = [{'symbol': 'SC'}, {'symbol': 'SA'}, {'symbol': 'SB'}]
     fetchData = {}
-    objectSet(fetchData, testCouchURL + '/_find', jsonStringify({'docs': arrayReverse(stockDocs)}))
+    objectSet(fetchData, testCouchURL + '/_find', jsonStringify({'docs': stockDocs}))
     objectSet(fetchData, testCouchURL + '/_all_docs', jsonStringify({'rows': []}))
     objectSet(fetchData, testCouchURL + '/_bulk_docs', '[]')
     testMockAll({'systemFetch': fetchData})
     response = testAction('POST', '/updateStocks', '', {'all': true})
     unittestEqual(arrayGet(response, 0), '200 OK')
-    unittestEqual(arrayLength(objectGet(arrayGet(response, 1), 'results')), 12)
+    unittestEqual(arrayLength(objectGet(arrayGet(response, 1), 'results')), 3)
     calls = unittestMockEnd()
-    unittestEqual(arrayLength(calls), 5)
+    unittestEqual(arrayLength(calls), 4)
     unittestDeepEqual(arrayGet(calls, 0), testCouchCall('/_find', {'selector': {'type': 'stock'}, 'fields': ['symbol'], 'limit': 100000}))
-    batch1 = []
-    for symbol in arraySlice(symbols, 0, 10):
-        arrayPush(batch1, testYahooRequest(symbol))
-    endfor
-    unittestDeepEqual(arrayGet(calls, 1), ['systemFetch', [batch1]])
-    unittestDeepEqual(arrayGet(calls, 2), ['systemFetch', [[testYahooRequest('SK'), testYahooRequest('SL')]]])
+    unittestDeepEqual(arrayGet(calls, 1), ['systemFetch', [[testYahooRequest('SA'), testYahooRequest('SB'), testYahooRequest('SC')]]])
 endfunction
 unittestRunTest('testUpdateStocks_all')
 

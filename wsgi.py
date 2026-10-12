@@ -33,8 +33,9 @@ for env_name, global_name in (
 # The globals passed to the backend - the static files, and the configuration and secrets
 APP_GLOBALS = {'markowitzStatics': APP_STATICS, **COUCH_GLOBALS}
 
-# Create the WSGI application
-application = wsgi_application(APP_SRC, 'backend/markowitz.bare', 'markowitzApplication', globals_=APP_GLOBALS)
+# Create the WSGI application - unless running the database administration command-line interface
+if __name__ != '__main__':
+    application = wsgi_application(APP_SRC, 'backend/markowitz.bare', 'markowitzApplication', globals_=APP_GLOBALS)
 
 
 def main():

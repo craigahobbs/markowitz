@@ -766,7 +766,7 @@ endfunction
 async function testMarkowitzNewRunPage_selectBinding():
     args = {'page': 'new'}
     data = testNewRunInputData(markowitzRunFormDefault)
-    testVerifyClick(systemPartial(markowitzNewRunPage, args), 'Select', systemPartial(markowitzOnSelectGroup, args, '', true), data)
+    testVerifyClick(systemPartial(markowitzNewRunPage, args), 'Select', systemPartial(markowitzOnSelectGroup, args, '', true, testStocks, testGroups), data)
 endfunction
 unittestRunTest('testMarkowitzNewRunPage_selectBinding')
 
@@ -776,7 +776,7 @@ async function testMarkowitzNewRunPage_changeBinding():
     args = {'page': 'new'}
     data = testNewRunInputData(testForm)
     render = systemPartial(markowitzNewRunPage, args, testForm, null, true)
-    testVerifyClick(render, 'Change', systemPartial(markowitzOnSelectGroup, args, 'Dow 30', false), data)
+    testVerifyClick(render, 'Change', systemPartial(markowitzOnSelectGroup, args, 'Dow 30', false, testStocks, testGroups), data)
 endfunction
 unittestRunTest('testMarkowitzNewRunPage_changeBinding')
 
@@ -853,10 +853,10 @@ async function testMarkowitzOnSelectGroup():
     args = {'page': 'new'}
     data = testNewRunInputData(testForm)
     unittestMockAll(data)
-    markowitzOnSelectGroup(args, 'Dow 30', true)
+    markowitzOnSelectGroup(args, 'Dow 30', true, testStocks, testGroups)
     calls = unittestMockEnd()
     unittestDeepEqual(arraySlice(calls, 0, 6), testFormInputCalls)
-    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(systemPartial(markowitzNewRunPage, args, testForm, null, true), data))
+    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(systemPartial(markowitzNewRunPage, args, testForm, null, true, testStocks, testGroups), data))
 endfunction
 unittestRunTest('testMarkowitzOnSelectGroup')
 
@@ -870,7 +870,8 @@ async function testMarkowitzOnSetGroup():
     calls = unittestMockEnd()
     form = objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '12', 'exclude': 'S10'})
     unittestDeepEqual(arraySlice(calls, 0, 6), testFormInputCalls)
-    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(systemPartial(markowitzNewRunPage, args, form), data))
+    render = systemPartial(markowitzNewRunPage, args, form, null, false, testMinimumStocks, testMinimumGroups)
+    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(render, data))
 endfunction
 unittestRunTest('testMarkowitzOnSetGroup')
 
@@ -884,7 +885,8 @@ async function testMarkowitzOnRunPeriodChange():
     calls = unittestMockEnd()
     form = objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '6', 'exclude': ''})
     unittestDeepEqual(arraySlice(calls, 0, 6), testFormInputCalls)
-    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(systemPartial(markowitzNewRunPage, args, form), data))
+    render = systemPartial(markowitzNewRunPage, args, form, null, false, testMinimumStocks, testMinimumGroups)
+    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(render, data))
 endfunction
 unittestRunTest('testMarkowitzOnRunPeriodChange')
 
@@ -914,7 +916,8 @@ async function testMarkowitzOnStartRun_invalid():
     calls = unittestMockEnd()
     unittestDeepEqual(arraySlice(calls, 0, 6), testFormInputCalls)
     message = 'Select a stock group.'
-    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(systemPartial(markowitzNewRunPage, args, form, message), data))
+    render = systemPartial(markowitzNewRunPage, args, form, message, false, testStocks, testGroups)
+    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(render, data))
 endfunction
 unittestRunTest('testMarkowitzOnStartRun_invalid')
 
@@ -932,7 +935,8 @@ async function testMarkowitzOnStartRun_missing():
     form = objectAssign(objectCopy(inputForm), {'group': 'S&P 100', 'exclude': 'KO MSFT'})
     message = 'Updated the excluded stocks - 1 of the group\'s stocks don\'t have prices for the analysis period. ' + \
         'Click "Start Run" again to start the run.'
-    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(systemPartial(markowitzNewRunPage, args, form, message), data))
+    render = systemPartial(markowitzNewRunPage, args, form, message, false, testStocks, testGroups)
+    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(render, data))
 endfunction
 unittestRunTest('testMarkowitzOnStartRun_missing')
 
@@ -947,7 +951,8 @@ async function testMarkowitzOnStartRun_error():
     unittestDeepEqual(arraySlice(calls, 0, 7), testArrayConcat(testFormInputCalls, [ \
         ['systemFetch', [{'url': 'createRun', 'body': jsonStringify(testRequest)}]] \
     ]))
-    unittestDeepEqual(arraySlice(calls, 7), testPageCalls(systemPartial(markowitzNewRunPage, args, testForm, 'The run failed.'), data))
+    render = systemPartial(markowitzNewRunPage, args, testForm, 'The run failed.', false, testStocks, testGroups)
+    unittestDeepEqual(arraySlice(calls, 7), testPageCalls(render, data))
 endfunction
 unittestRunTest('testMarkowitzOnStartRun_error')
 

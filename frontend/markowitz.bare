@@ -322,11 +322,14 @@ endfunction
 #
 
 
-async function markowitzNewRunPage(args, form, message, selecting):
-    stocksResponse = markowitzFetch('getStocks')
-    groupsResponse = markowitzFetch('getGroups')
-    stocks = if(stocksResponse != null, objectGet(stocksResponse, 'stocks'))
-    groups = if(groupsResponse != null, objectGet(groupsResponse, 'groups'))
+# The new run page - the handlers re-render it with the stocks and groups
+async function markowitzNewRunPage(args, form, message, selecting, stocks, groups):
+    if stocks == null || groups == null:
+        stocksResponse = markowitzFetch('getStocks')
+        groupsResponse = markowitzFetch('getGroups')
+        stocks = if(stocksResponse != null, objectGet(stocksResponse, 'stocks'))
+        groups = if(groupsResponse != null, objectGet(groupsResponse, 'groups'))
+    endif
 
     # Start with the default form (and the group argument's months and excluded stocks), or a prior run's
     id = objectGet(args, 'id')
@@ -376,7 +379,7 @@ async function markowitzNewRunPage(args, form, message, selecting):
         arrayPush(groupElements, {'text': groupName + ' (' + arrayLength(objectGet(group, 'symbols')) + ' stocks) '})
     endif
     arrayPush(groupElements, formsLinkButtonElements( \
-        if(group != null, 'Change', 'Select'), systemPartial(markowitzOnSelectGroup, args, groupName, !selecting) \
+        if(group != null, 'Change', 'Select'), systemPartial(markowitzOnSelectGroup, args, groupName, !selecting, stocks, groups) \
     ))
     elementModelRender({'html': 'p', 'elem': groupElements})
 
@@ -589,8 +592,8 @@ endfunction
 
 
 # Show or hide the stock group selection list
-async function markowitzOnSelectGroup(args, group, selecting):
-    markowitzNewRunPage(args, markowitzRunFormInputs(group), null, selecting)
+async function markowitzOnSelectGroup(args, group, selecting, stocks, groups):
+    markowitzNewRunPage(args, markowitzRunFormInputs(group), null, selecting, stocks, groups)
 endfunction
 
 
@@ -598,7 +601,7 @@ endfunction
 async function markowitzOnSetGroup(args, group, stocks, groups):
     form = markowitzRunFormInputs(group)
     markowitzRunFormUpdate(form, stocks, groups, true)
-    markowitzNewRunPage(args, form)
+    markowitzNewRunPage(args, form, null, false, stocks, groups)
 endfunction
 
 
@@ -606,7 +609,7 @@ endfunction
 async function markowitzOnRunPeriodChange(args, group, stocks, groups):
     form = markowitzRunFormInputs(group)
     markowitzRunFormUpdate(form, stocks, groups, false)
-    markowitzNewRunPage(args, form)
+    markowitzNewRunPage(args, form, null, false, stocks, groups)
 endfunction
 
 
@@ -622,17 +625,18 @@ async function markowitzOnStartRun(args, stocks, groups, group):
         arrayExtend(exclude, objectGet(requestResult, 'missing'))
         objectSet(form, 'exclude', arrayJoin(markowitzSymbols(exclude), ' '))
         markowitzNewRunPage(args, form, 'Updated the excluded stocks - ' + arrayLength(objectGet(requestResult, 'missing')) + \
-            ' of the group\'s stocks don\'t have prices for the analysis period. Click "Start Run" again to start the run.')
+            ' of the group\'s stocks don\'t have prices for the analysis period. Click "Start Run" again to start the run.', \
+            false, stocks, groups)
         return
     elif objectHas(requestResult, 'error'):
-        markowitzNewRunPage(args, form, objectGet(requestResult, 'error'))
+        markowitzNewRunPage(args, form, objectGet(requestResult, 'error'), false, stocks, groups)
         return
     endif
 
     # Start the run
     response = markowitzFetch('createRun', objectGet(requestResult, 'request'))
     if response == null:
-        markowitzNewRunPage(args, form, 'The run failed.')
+        markowitzNewRunPage(args, form, 'The run failed.', false, stocks, groups)
         return
     endif
     windowSetLocation(argsURL(markowitzArguments, {'page': 'run', 'id': objectGet(response, 'id')}, true))

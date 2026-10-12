@@ -28,9 +28,6 @@ markowitzYahooURL = 'https://query1.finance.yahoo.com/v8/finance/chart/'
 markowitzYahooQuery = '?period1=-2208988800&period2=9999999999&interval=1mo'
 markowitzYahooHeaders = {'User-Agent': 'Mozilla/5.0 (compatible; Markowitz)'}
 
-# The number of stock price downloads made at once
-markowitzDownloadBatchSize = 10
-
 # The stock summary fields
 markowitzStockInfoFields = ['symbol', 'name', 'currency', 'firstMonth', 'lastMonth', 'monthCount', 'updated']
 
@@ -106,7 +103,7 @@ async function markowitzDownloadStocks(symbols):
         return {'results': []}
     endif
 
-    # Download the stocks' monthly prices, a batch at a time
+    # Download the stocks' monthly prices
     downloadRequests = []
     ids = []
     for symbol in symbols:
@@ -114,13 +111,7 @@ async function markowitzDownloadStocks(symbols):
         arrayPush(downloadRequests, {'url': url, 'headers': markowitzYahooHeaders})
         arrayPush(ids, markowitzStockID(symbol))
     endfor
-    downloads = []
-    ixBatch = 0
-    while ixBatch < arrayLength(downloadRequests):
-        ixBatchEnd = mathMin(ixBatch + markowitzDownloadBatchSize, arrayLength(downloadRequests))
-        arrayExtend(downloads, systemFetch(arraySlice(downloadRequests, ixBatch, ixBatchEnd)))
-        ixBatch = ixBatchEnd
-    endwhile
+    downloads = systemFetch(downloadRequests)
 
     # Get the existing stock documents' revisions
     revs = markowitzDBRevs(ids)
