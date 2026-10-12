@@ -653,11 +653,15 @@ function markowitzAnalyzeStocks(symbols, relatives, horizonRelatives, horizon):
         arrayPush(residuals, stockResiduals)
     endfor
 
-    # The covariance matrix of the residuals
+    # The covariance matrix of the residuals - it's symmetric, so each pair of stocks is computed once
     covariance = []
-    for residualsI in residuals:
+    for residualsI, ixStockI in residuals:
         row = []
-        for residualsJ in residuals:
+        for residualsJ, ixStockJ in residuals:
+            if ixStockJ < ixStockI:
+                arrayPush(row, arrayGet(arrayGet(covariance, ixStockJ), ixStockI))
+                continue
+            endif
             sum = 0
             for residual, ixMonth in residualsI:
                 sum = sum + residual * arrayGet(residualsJ, ixMonth)
