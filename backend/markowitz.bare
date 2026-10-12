@@ -790,26 +790,28 @@ function markowitzSolve(matrix):
             return null
         endif
 
-        # Swap the pivot row into place and normalize it - its prior columns are zero
+        # Swap the pivot row into place and normalize it - its prior columns are zero. The pivot column is never read
+        # again (its pivot row value would be one and its other rows' zero), so it's skipped.
         pivotRow = arrayGet(matrix, ixPivot)
         arraySet(matrix, ixPivot, arrayGet(matrix, ixColumn))
         arraySet(matrix, ixColumn, pivotRow)
         pivot = arrayGet(pivotRow, ixColumn)
-        ixValue = ixColumn
+        ixValue = ixColumn + 1
         while ixValue < columnCount:
             arraySet(pivotRow, ixValue, arrayGet(pivotRow, ixValue) / pivot)
             ixValue = ixValue + 1
         endwhile
 
         # Eliminate the column from the other rows
+        pivotValues = arraySlice(pivotRow, ixColumn + 1)
         for row, ixRow in matrix:
             factor = arrayGet(row, ixColumn)
             if ixRow != ixColumn && factor != 0:
-                ixValue = ixColumn
-                while ixValue < columnCount:
-                    arraySet(row, ixValue, arrayGet(row, ixValue) - factor * arrayGet(pivotRow, ixValue))
+                ixValue = ixColumn + 1
+                for pivotValue in pivotValues:
+                    arraySet(row, ixValue, arrayGet(row, ixValue) - factor * pivotValue)
                     ixValue = ixValue + 1
-                endwhile
+                endfor
             endif
         endfor
 
