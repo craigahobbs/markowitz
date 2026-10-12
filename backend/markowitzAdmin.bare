@@ -82,6 +82,10 @@ async function markowitzAdminInit():
         endif
     endfor
     systemLog('Updated ' + updatedCount + ' of ' + arrayLength(results) + ' stocks')
+    if !updatedCount:
+        systemLog('Failed to update the stocks - is Yahoo Finance available?')
+        return 1
+    endif
     return 0
 endfunction
 

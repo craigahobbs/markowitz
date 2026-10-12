@@ -161,7 +161,7 @@ async function testMarkowitzAdminInit():
     objectSet(fetchData, testAdminCouchURL + '/group%3AGroup%20B', '{"ok": true}')
     objectSet(fetchData, testAdminCouchURL + '/_bulk_docs', '[]')
     result = testAdminRun(['init'], fetchData)
-    unittestEqual(arrayGet(result, 0), 0)
+    unittestEqual(arrayGet(result, 0), 1)
     logs = []
     for call in arrayGet(result, 1):
         if arrayGet(call, 0) == 'systemLog':
@@ -178,7 +178,8 @@ async function testMarkowitzAdminInit():
         'Downloading 2 stocks\' prices...', \
         'Failed to update IBM: Download failed - is "IBM" a Yahoo Finance symbol?', \
         'Failed to update KO: Download failed - is "KO" a Yahoo Finance symbol?', \
-        'Updated 0 of 2 stocks' \
+        'Updated 0 of 2 stocks', \
+        'Failed to update the stocks - is Yahoo Finance available?' \
     ])
 endfunction
 unittestRunTest('testMarkowitzAdminInit')

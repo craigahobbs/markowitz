@@ -1184,6 +1184,26 @@ endfunction
 unittestRunTest('testMarkowitzParseYahoo')
 
 
+function testMarkowitzParseYahoo_daylightSaving():
+    # Downloaded out of daylight saving time (EST) - the months' prices in daylight saving time (EDT) are at 04:00 UTC,
+    # 23:00 EST of the month's prior day. The latest trade is the evening of 2026-11-30.
+    response = jsonStringify({'chart': {'result': [{ \
+        'meta': {'gmtoffset': -18000, 'regularMarketTime': 1796090400}, \
+        'timestamp': [1772341200, 1775016000, 1777608000, 1780286400, 1796090400], \
+        'indicators': {'adjclose': [{'adjclose': [3, 4, 5, 6, 7]}]} \
+    }]}})
+    unittestDeepEqual(objectGet(markowitzParseYahoo(response), 'prices'), {'2026-03': 3, '2026-04': 4, '2026-05': 5, '2026-06': 6})
+endfunction
+unittestRunTest('testMarkowitzParseYahoo_daylightSaving')
+
+
+function testMarkowitzTrimURL():
+    unittestEqual(markowitzTrimURL('http://127.0.0.1:5984/markowitz'), 'http://127.0.0.1:5984/markowitz')
+    unittestEqual(markowitzTrimURL('http://127.0.0.1:5984/markowitz//'), 'http://127.0.0.1:5984/markowitz')
+endfunction
+unittestRunTest('testMarkowitzTrimURL')
+
+
 function testMarkowitzParseYahoo_failure():
     unittestEqual(markowitzParseYahoo(null), null)
     unittestEqual(markowitzParseYahoo('{}'), null)

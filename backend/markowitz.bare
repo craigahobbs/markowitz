@@ -7,8 +7,16 @@ include '../frontend/markowitzTypes.bare'
 include '../frontend/markowitzUtil.bare'
 
 
+# Remove a URL's trailing slashes
+function markowitzTrimURL(url):
+    return regexReplace(markowitzRegexTrailingSlashes, url, '')
+endfunction
+
+markowitzRegexTrailingSlashes = regexNew('/+$')
+
+
 # The CouchDB database URL and request headers - the host passes the URL and credentials ("user:password") as globals
-markowitzCouchURL = systemGlobalGet('markowitzCouchURL', 'http://127.0.0.1:5984/markowitz')
+markowitzCouchURL = markowitzTrimURL(systemGlobalGet('markowitzCouchURL', 'http://127.0.0.1:5984/markowitz'))
 markowitzCouchHeaders = { \
     'Content-Type': 'application/json', \
     'Authorization': 'Basic ' + base64Encode(stringEncode(systemGlobalGet('markowitzCouchCredentials', ''))) \
@@ -28,6 +36,9 @@ markowitzStockInfoFields = ['symbol', 'name', 'currency', 'firstMonth', 'lastMon
 
 # The run summary fields
 markowitzRunInfoFields = ['_id', 'name', 'created', 'symbols', 'group', 'endMonth', 'months', 'horizon', 'targets']
+
+# Half a day, in seconds
+markowitzHalfDaySeconds = 43200
 
 # The magnitude below which a pivot is zero - the matrix is singular
 markowitzSingularEpsilon = 1e-9
@@ -478,7 +489,7 @@ endfunction
 
 
 # Parse a Yahoo Finance chart API monthly response - returns the stock document fields, or null on failure. The month
-# of the latest trade is incomplete, so it's excluded.
+# of the latest trade is incomplete, so it's excluded (and so are any later months).
 function markowitzParseYahoo(responseText):
     response = if(responseText != null, jsonParse(responseText))
     chart = if(response != null, objectGet(response, 'chart'))
@@ -491,15 +502,17 @@ function markowitzParseYahoo(responseText):
     offset = objectGet(meta, 'gmtoffset', 0)
     currentMonth = markowitzTimestampMonth(objectGet(meta, 'regularMarketTime', 0) + offset)
 
-    # Map each month to its last price
+    # Map each month to its last price. A month's price is at the exchange's local midnight on the month's first day,
+    # but the offset is the latest trade's - in or out of daylight saving time - so round to the nearest local day. The
+    # latest trade's price is at its time, which rounds into its month, or the next.
     timestamps = objectGet(chartResult, 'timestamp', [])
     adjcloses = objectGet(objectGet(chartResult, 'indicators', {}), 'adjclose')
     closes = if(adjcloses, objectGet(arrayGet(adjcloses, 0), 'adjclose'), [])
     prices = {}
     for timestamp, ixTimestamp in timestamps:
-        month = markowitzTimestampMonth(timestamp + offset)
+        month = markowitzTimestampMonth(timestamp + offset + markowitzHalfDaySeconds)
         close = if(ixTimestamp < arrayLength(closes), arrayGet(closes, ixTimestamp))
-        if month != currentMonth && close != null && close > 0:
+        if month < currentMonth && close != null && close > 0:
             objectSet(prices, month, close)
         endif
     endfor
