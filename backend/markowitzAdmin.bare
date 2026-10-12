@@ -1,0 +1,182 @@
+# The database administration command-line interface - "python3 wsgi.py check|init|reset" (see the Makefile)
+
+include <url.bare>
+
+# The backend - its database helpers and actions
+include 'markowitz.bare'
+
+
+# The CouchDB server URL - the database URL's parent
+markowitzAdminServerURL = stringSlice(markowitzCouchURL, 0, stringLastIndexOf(markowitzCouchURL, '/'))
+
+# The built-in stock groups that "init" and "reset" save - Yahoo Finance symbols (e.g. "BRK-B")
+markowitzAdminGroups = jsonParse(systemFetch('markowitzGroups.json'))
+
+
+# Run an administration command - returns the exit status
+async function markowitzAdmin(args):
+    command = if(arrayLength(args) == 1, arrayGet(args, 0))
+    if command == 'check':
+        return markowitzAdminCheck()
+    elif command == 'init':
+        return markowitzAdminInit()
+    elif command == 'reset':
+        return markowitzAdminReset()
+    endif
+    systemLog('usage: python3 wsgi.py {check|init|reset}')
+    return 1
+endfunction
+
+
+# Check that CouchDB is running and the database exists
+async function markowitzAdminCheck():
+    if !markowitzAdminServerRunning():
+        return 1
+    endif
+    if systemFetch({'url': markowitzCouchURL, 'headers': markowitzCouchHeaders}) == null:
+        systemLog( \
+            'The database "' + markowitzCouchURL + '" does not exist, or MARKOWITZ_COUCH_CREDENTIALS is not valid - ' + \
+                'run "make init"' \
+        )
+        return 1
+    endif
+    systemLog('The database "' + markowitzCouchURL + '" is ready')
+    return 0
+endfunction
+
+
+# Initialize the database - add the admin, create the database, save the built-in stock groups, and download their
+# stocks' prices
+async function markowitzAdminInit():
+    if !markowitzAdminServerRunning() || !markowitzAdminAddAdmin():
+        return 1
+    endif
+
+    # Create the system databases and the database
+    for url in [markowitzAdminServerURL + '/_users', markowitzAdminServerURL + '/_replicator', markowitzCouchURL]:
+        if !markowitzAdminCreateDatabase(url):
+            return 1
+        endif
+    endfor
+
+    # Save the built-in stock groups
+    symbols = markowitzAdminSaveGroups()
+    if symbols == null:
+        return 1
+    endif
+
+    # Download the groups' stocks' prices
+    systemLog('Downloading ' + arrayLength(symbols) + ' stocks\' prices...')
+    results = objectGet(markowitzDownloadStocks(symbols), 'results')
+    if results == null:
+        systemLog('Failed to save the stocks')
+        return 1
+    endif
+    updatedCount = 0
+    for result in results:
+        error = objectGet(result, 'error')
+        if error != null:
+            systemLog('Failed to update ' + objectGet(result, 'symbol') + ': ' + error)
+        else:
+            updatedCount = updatedCount + 1
+        endif
+    endfor
+    systemLog('Updated ' + updatedCount + ' of ' + arrayLength(results) + ' stocks')
+    return 0
+endfunction
+
+
+# Delete and re-create the database, and save the built-in stock groups
+async function markowitzAdminReset():
+    if !markowitzAdminServerRunning():
+        return 1
+    endif
+    if systemFetch({'url': markowitzCouchURL, 'method': 'DELETE', 'headers': markowitzCouchHeaders}) != null:
+        systemLog('Deleted the database "' + markowitzCouchURL + '"')
+    elif systemFetch({'url': markowitzCouchURL, 'headers': markowitzCouchHeaders}) != null:
+        systemLog('Failed to delete the database "' + markowitzCouchURL + '"')
+        return 1
+    endif
+    if !markowitzAdminCreateDatabase(markowitzCouchURL) || markowitzAdminSaveGroups() == null:
+        return 1
+    endif
+    systemLog('Run "make init" to download the groups\' stocks\' prices')
+    return 0
+endfunction
+
+
+# Save the built-in stock groups - returns the groups' stock symbols, or null on failure
+async function markowitzAdminSaveGroups():
+    symbols = []
+    for group in markowitzAdminGroups:
+        name = objectGet(group, 'name')
+        groupSymbols = objectGet(group, 'symbols')
+        if !markowitzSaveGroup(name, groupSymbols):
+            systemLog('Failed to save the group "' + name + '"')
+            return null
+        endif
+        systemLog('Saved the group "' + name + '" (' + arrayLength(groupSymbols) + ' stocks)')
+        arrayExtend(symbols, groupSymbols)
+    endfor
+    return markowitzSymbols(symbols)
+endfunction
+
+
+# Check that the CouchDB server is running - returns true if it is
+async function markowitzAdminServerRunning():
+    if systemFetch(markowitzAdminServerURL + '/') == null:
+        systemLog('CouchDB is not running at "' + markowitzAdminServerURL + '" - start it (e.g. "brew services start couchdb")')
+        return false
+    endif
+    return true
+endfunction
+
+
+# Add the CouchDB admin of the credentials ("user:password"), if it doesn't exist - returns true on success. CouchDB
+# can only add the first admin over HTTP (CouchDB 3 doesn't start without an admin - add it to the "[admins]" section
+# of its "local.ini" file).
+async function markowitzAdminAddAdmin():
+    credentials = systemGlobalGet('markowitzCouchCredentials', '')
+    ixColon = stringIndexOf(credentials, ':')
+    if ixColon < 1:
+        systemLog('Set MARKOWITZ_COUCH_CREDENTIALS to the CouchDB admin\'s "user:password"')
+        return false
+    endif
+    user = stringSlice(credentials, 0, ixColon)
+
+    # Are the credentials an admin's?
+    sessionJSON = systemFetch({'url': markowitzAdminServerURL + '/_session', 'headers': markowitzCouchHeaders})
+    userContext = if(sessionJSON != null, objectGet(jsonParse(sessionJSON), 'userCtx'))
+    if userContext != null && arrayIndexOf(objectGet(userContext, 'roles'), '_admin') != -1:
+        systemLog('The admin "' + user + '" exists')
+        return true
+    endif
+
+    # Add the admin - this fails if CouchDB has an admin
+    url = markowitzAdminServerURL + '/_node/_local/_config/admins/' + urlEncodeComponent(user)
+    body = jsonStringify(stringSlice(credentials, ixColon + 1))
+    if systemFetch({'url': url, 'method': 'PUT', 'headers': {'Content-Type': 'application/json'}, 'body': body}) == null:
+        systemLog( \
+            'Failed to add the admin "' + user + '" - if CouchDB has an admin, set MARKOWITZ_COUCH_CREDENTIALS to ' + \
+                'its "user:password"' \
+        )
+        return false
+    endif
+    systemLog('Added the admin "' + user + '"')
+    return true
+endfunction
+
+
+# Create a database, if it doesn't exist - returns true on success
+async function markowitzAdminCreateDatabase(url):
+    if systemFetch({'url': url, 'headers': markowitzCouchHeaders}) != null:
+        systemLog('The database "' + url + '" exists')
+        return true
+    endif
+    if systemFetch({'url': url, 'method': 'PUT', 'headers': markowitzCouchHeaders}) == null:
+        systemLog('Failed to create the database "' + url + '"')
+        return false
+    endif
+    systemLog('Created the database "' + url + '"')
+    return true
+endfunction

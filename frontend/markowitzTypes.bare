@@ -19,6 +19,20 @@ markowitzTypes = schemaParse( \
     'typedef string(len == 7) Month', \
     '', \
     '', \
+    '# A stock group name (e.g. "S&P 100")', \
+    'typedef string(len > 0, len <= 100) GroupName', \
+    '', \
+    '', \
+    '# A stock excluded from a run, and why', \
+    'struct Exclusion', \
+    '', \
+    '    # The stock symbol', \
+    '    string symbol', \
+    '', \
+    '    # The reason the stock was excluded (e.g. "Prices start in 2021-03")', \
+    '    string reason', \
+    '', \
+    '', \
     'group "Stocks"', \
     '', \
     '', \
@@ -97,12 +111,19 @@ markowitzTypes = schemaParse( \
     '        UnknownStock', \
     '', \
     '', \
-    '# Download stocks\' monthly prices and add or update them in the database', \
+    '# Download stocks\' monthly prices and add or update them in the database - the stock symbols, the group\'s stocks,', \
+    '# and every stock in the database, if "all" is true', \
     'action updateStocks', \
     '    input', \
     '', \
     '        # The stock symbols', \
-    '        Symbol[len > 0, len <= 50] symbols', \
+    '        optional Symbol[len > 0, len <= 50] symbols', \
+    '', \
+    '        # The stock group', \
+    '        optional GroupName group', \
+    '', \
+    '        # If true, update every stock in the database', \
+    '        optional bool all', \
     '', \
     '    output', \
     '', \
@@ -110,6 +131,9 @@ markowitzTypes = schemaParse( \
     '        StockUpdate[] results', \
     '', \
     '    errors (MarkowitzError)', \
+    '', \
+    '        # The group is unknown', \
+    '        UnknownGroup', \
     '', \
     '', \
     '# Delete a stock', \
@@ -123,6 +147,82 @@ markowitzTypes = schemaParse( \
     '', \
     '        # The stock is unknown', \
     '        UnknownStock', \
+    '', \
+    '', \
+    'group "Groups"', \
+    '', \
+    '', \
+    '# A stock group (e.g. "S&P 100")', \
+    'struct Group', \
+    '', \
+    '    # The group name', \
+    '    string name', \
+    '', \
+    '    # The group\'s stock symbols, sorted', \
+    '    string[] symbols', \
+    '', \
+    '', \
+    '# Get the stock groups', \
+    'action getGroups', \
+    '    urls', \
+    '        GET', \
+    '', \
+    '    output', \
+    '', \
+    '        # The groups, sorted by name', \
+    '        Group[] groups', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '', \
+    '# Get a stock group and its stocks', \
+    'action getGroup', \
+    '    urls', \
+    '        GET', \
+    '', \
+    '    query', \
+    '', \
+    '        # The group name', \
+    '        GroupName name', \
+    '', \
+    '    output', \
+    '', \
+    '        # The group', \
+    '        Group group', \
+    '', \
+    '        # The group\'s stocks in the database, sorted by symbol', \
+    '        StockInfo[] stocks', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '        # The group is unknown', \
+    '        UnknownGroup', \
+    '', \
+    '', \
+    '# Create or update a stock group', \
+    'action setGroup', \
+    '    input', \
+    '', \
+    '        # The group name', \
+    '        GroupName name', \
+    '', \
+    '        # The group\'s stock symbols', \
+    '        Symbol[len > 0, len <= 1000] symbols', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '', \
+    '# Delete a stock group', \
+    'action deleteGroup', \
+    '    input', \
+    '', \
+    '        # The group name', \
+    '        GroupName name', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '        # The group is unknown', \
+    '        UnknownGroup', \
     '', \
     '', \
     'group "Runs"', \
@@ -140,8 +240,11 @@ markowitzTypes = schemaParse( \
     '    # The time the run was created', \
     '    datetime created', \
     '', \
-    '    # The portfolio stock symbols', \
+    '    # The portfolio stock symbols - the stocks with a price for every month of the analysis period', \
     '    string[] symbols', \
+    '', \
+    '    # The stock group - absent for a run of stock symbols (no longer supported)', \
+    '    optional string group', \
     '', \
     '    # The last month of the analysis period', \
     '    Month endMonth', \
@@ -164,6 +267,9 @@ markowitzTypes = schemaParse( \
     '', \
     '    # The portfolios, one for each target return', \
     '    Portfolio[] portfolios', \
+    '', \
+    '    # The stocks excluded from the run - stocks without a price for every month of the analysis period', \
+    '    optional Exclusion[] excluded', \
     '', \
     '', \
     '# A run stock\'s statistics', \
@@ -197,6 +303,9 @@ markowitzTypes = schemaParse( \
     '', \
     '    # The stocks deleted from the portfolio for negative allocations, in order of deletion', \
     '    string[] deleted', \
+    '', \
+    '    # The deleted stocks\' (negative) allocations when they were deleted, in order of deletion', \
+    '    optional float[] deletedWeights', \
     '', \
     '    # The variance of the portfolio\'s monthly returns, in percent', \
     '    optional float variance', \
@@ -251,18 +360,22 @@ markowitzTypes = schemaParse( \
     '', \
     '', \
     '# Start a run - compute the minimum-variance portfolio for each target return from the stocks\' monthly', \
-    '# returns, the method of Harry Markowitz, as ported from a 1967 Fortran program', \
+    '# returns, the method of Harry Markowitz, as ported from a 1967 Fortran program. Stocks without a price for', \
+    '# every month of the analysis period are excluded.', \
     'action createRun', \
     '    input', \
     '', \
     '        # The run name', \
     '        string(len > 0, len <= 100) name', \
     '', \
-    '        # The portfolio stock symbols', \
-    '        Symbol[len >= 2, len <= 100] symbols', \
+    '        # The stock group whose stocks are the portfolio stocks', \
+    '        GroupName group', \
     '', \
-    '        # The last month of the analysis period (default is the last month for which every stock has a', \
-    '        # price)', \
+    '        # The group\'s stocks to exclude from the run', \
+    '        optional Symbol[len <= 1000] exclude', \
+    '', \
+    '        # The last month of the analysis period (default is the last month for which every stock, not excluded,', \
+    '        # has a price)', \
     '        optional Month endMonth', \
     '', \
     '        # The number of months in the analysis period (default is 36)', \
@@ -284,11 +397,11 @@ markowitzTypes = schemaParse( \
     '        # The end month is not a "YYYY-MM" month', \
     '        InvalidMonth', \
     '', \
-    '        # A stock is unknown', \
-    '        UnknownStock', \
+    '        # The group is unknown', \
+    '        UnknownGroup', \
     '', \
-    '        # A stock has no price for a month of the analysis period', \
-    '        MissingData', \
+    '        # Fewer than two stocks have a price for every month of the analysis period', \
+    '        TooFewStocks', \
     '', \
     '        # There are more stocks than months in the analysis period - the problem is singular', \
     '        TooManyStocks', \

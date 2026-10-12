@@ -126,6 +126,7 @@ testRunPortfolios = [ \
             {'symbol': 'D', 'weight': 0.1079131724275569} \
         ], \
         'deleted': [], \
+        'deletedWeights': [], \
         'variance': 6.38191498843673, \
         'realizedReturn': 67.91586178632521 \
     }, \
@@ -138,10 +139,17 @@ testRunPortfolios = [ \
             {'symbol': 'C', 'weight': 0.3768842744599843} \
         ], \
         'deleted': ['D'], \
+        'deletedWeights': [-0.05606348427851773], \
         'variance': 9.109149470933982, \
         'realizedReturn': 58.68235370379473 \
     }, \
-    {'target': arrayGet(testTargets, 2), 'solved': false, 'allocations': [], 'deleted': ['D', 'B', 'C']} \
+    { \
+        'target': arrayGet(testTargets, 2), \
+        'solved': false, \
+        'allocations': [], \
+        'deleted': ['D', 'B', 'C'], \
+        'deletedWeights': [-1.121911752868005, -1.7071558357812422, -4.161419031709107] \
+    } \
 ]
 
 
@@ -159,13 +167,24 @@ function testPrices(relatives):
 endfunction
 
 
-# The test stock documents' run fields
-function testStockDocs():
+# The test stock documents' run fields - the test stocks, by default
+function testStockDocs(symbols):
     docs = []
-    for symbol, ixSymbol in testSymbols:
-        arrayPush(docs, {'symbol': symbol, 'lastMonth': '2023-04', 'prices': testPrices(arrayGet(testRelatives, ixSymbol))})
+    for symbol, ixSymbol in if(symbols != null, symbols, testSymbols):
+        relatives = arrayGet(testRelatives, ixSymbol % arrayLength(testRelatives))
+        arrayPush(docs, {'symbol': symbol, 'firstMonth': '2020-01', 'lastMonth': '2023-04', 'prices': testPrices(relatives)})
     endfor
     return docs
+endfunction
+
+
+# The test createRun stock document query
+function testCreateRunFindCall(symbols):
+    return testCouchCall('/_find', { \
+        'selector': {'type': 'stock', 'symbol': {'$in': symbols}}, \
+        'fields': ['symbol', 'firstMonth', 'lastMonth', 'prices'], \
+        'limit': 100000 \
+    })
 endfunction
 
 
@@ -411,6 +430,97 @@ endfunction
 unittestRunTest('testUpdateStocks_invalidInput')
 
 
+# The test stock download request
+function testYahooRequest(symbol):
+    return {'url': testYahooURL(symbol), 'headers': {'User-Agent': 'Mozilla/5.0 (compatible; Markowitz)'}}
+endfunction
+
+
+async function testUpdateStocks_group():
+    group = {'_id': 'group:Test', '_rev': '1-abc', 'type': 'group', 'name': 'Test', 'symbols': ['IBM', 'KO']}
+    fetchData = {}
+    objectSet(fetchData, testCouchURL + '/group%3ATest', jsonStringify(group))
+    objectSet(fetchData, testCouchURL + '/_all_docs', jsonStringify({'rows': []}))
+    objectSet(fetchData, testCouchURL + '/_bulk_docs', '[]')
+    testMockAll({'systemFetch': fetchData})
+    unittestDeepEqual( \
+        testAction('POST', '/updateStocks', '', {'symbols': ['msft', 'ko'], 'group': 'Test'}), \
+        ['200 OK', {'results': [ \
+            {'symbol': 'IBM', 'error': 'Download failed - is "IBM" a Yahoo Finance symbol?'}, \
+            {'symbol': 'KO', 'error': 'Download failed - is "KO" a Yahoo Finance symbol?'}, \
+            {'symbol': 'MSFT', 'error': 'Download failed - is "MSFT" a Yahoo Finance symbol?'} \
+        ]}] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [ \
+        testCouchCall('/group%3ATest'), \
+        ['systemFetch', [[testYahooRequest('IBM'), testYahooRequest('KO'), testYahooRequest('MSFT')]]], \
+        testCouchCall('/_all_docs', {'keys': ['stock:IBM', 'stock:KO', 'stock:MSFT']}), \
+        testCouchCall('/_bulk_docs', {'docs': []}) \
+    ])
+endfunction
+unittestRunTest('testUpdateStocks_group')
+
+
+async function testUpdateStocks_unknownGroup():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('POST', '/updateStocks', '', {'group': 'Test'}), \
+        ['404 Not Found', {'error': 'UnknownGroup', 'message': 'Unknown group "Test"'}] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [testCouchCall('/group%3ATest')])
+endfunction
+unittestRunTest('testUpdateStocks_unknownGroup')
+
+
+async function testUpdateStocks_all():
+    # Twelve stocks - downloaded in two batches
+    symbols = []
+    stockDocs = []
+    while arrayLength(symbols) < 12:
+        symbol = 'S' + stringFromCharCode(65 + arrayLength(symbols))
+        arrayPush(symbols, symbol)
+        arrayPush(stockDocs, {'symbol': symbol})
+    endwhile
+    fetchData = {}
+    objectSet(fetchData, testCouchURL + '/_find', jsonStringify({'docs': arrayReverse(stockDocs)}))
+    objectSet(fetchData, testCouchURL + '/_all_docs', jsonStringify({'rows': []}))
+    objectSet(fetchData, testCouchURL + '/_bulk_docs', '[]')
+    testMockAll({'systemFetch': fetchData})
+    response = testAction('POST', '/updateStocks', '', {'all': true})
+    unittestEqual(arrayGet(response, 0), '200 OK')
+    unittestEqual(arrayLength(objectGet(arrayGet(response, 1), 'results')), 12)
+    calls = unittestMockEnd()
+    unittestEqual(arrayLength(calls), 5)
+    unittestDeepEqual(arrayGet(calls, 0), testCouchCall('/_find', {'selector': {'type': 'stock'}, 'fields': ['symbol'], 'limit': 100000}))
+    batch1 = []
+    for symbol in arraySlice(symbols, 0, 10):
+        arrayPush(batch1, testYahooRequest(symbol))
+    endfor
+    unittestDeepEqual(arrayGet(calls, 1), ['systemFetch', [batch1]])
+    unittestDeepEqual(arrayGet(calls, 2), ['systemFetch', [[testYahooRequest('SK'), testYahooRequest('SL')]]])
+endfunction
+unittestRunTest('testUpdateStocks_all')
+
+
+async function testUpdateStocks_allError():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('POST', '/updateStocks', '', {'all': true}), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testUpdateStocks_allError')
+
+
+async function testUpdateStocks_none():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': []}))})
+    unittestDeepEqual(testAction('POST', '/updateStocks', '', {'all': true}), ['200 OK', {'results': []}])
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testUpdateStocks_none')
+
+
 #
 # deleteStock tests
 #
@@ -464,6 +574,187 @@ unittestRunTest('testDeleteStock_deleteError')
 
 
 #
+# Group tests
+#
+
+
+async function testGetGroups():
+    groupA = {'name': 'A Group', 'symbols': ['IBM', 'KO']}
+    groupB = {'name': 'B Group', 'symbols': ['MSFT']}
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': [groupB, groupA]}))})
+    unittestDeepEqual(testAction('GET', '/getGroups', '', null), ['200 OK', {'groups': [groupA, groupB]}])
+    unittestDeepEqual(unittestMockEnd(), [ \
+        testCouchCall('/_find', {'selector': {'type': 'group'}, 'fields': ['name', 'symbols'], 'limit': 100000}) \
+    ])
+endfunction
+unittestRunTest('testGetGroups')
+
+
+async function testGetGroups_databaseError():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('GET', '/getGroups', '', null), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testGetGroups_databaseError')
+
+
+async function testGetGroup():
+    group = {'_id': 'group:S&P 100', '_rev': '1-abc', 'type': 'group', 'name': 'S&P 100', 'symbols': ['IBM', 'KO', 'XYZ']}
+    stockIBM = {'symbol': 'IBM', 'firstMonth': '1962-01', 'lastMonth': '2026-09', 'monthCount': 777, 'updated': testNowISO}
+    stockKO = {'symbol': 'KO', 'firstMonth': '1985-01', 'lastMonth': '2026-09', 'monthCount': 501, 'updated': testNowISO}
+    fetchData = {}
+    objectSet(fetchData, testCouchURL + '/group%3AS%26P%20100', jsonStringify(group))
+    objectSet(fetchData, testCouchURL + '/_find', jsonStringify({'docs': [stockKO, stockIBM]}))
+    testMockAll({'systemFetch': fetchData})
+    unittestDeepEqual( \
+        testAction('GET', '/getGroup', 'name=S%26P%20100', null), \
+        ['200 OK', {'group': {'name': 'S&P 100', 'symbols': ['IBM', 'KO', 'XYZ']}, 'stocks': [stockIBM, stockKO]}] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [ \
+        testCouchCall('/group%3AS%26P%20100'), \
+        testCouchCall('/_find', { \
+            'selector': {'type': 'stock', 'symbol': {'$in': ['IBM', 'KO', 'XYZ']}}, \
+            'fields': markowitzStockInfoFields, \
+            'limit': 100000 \
+        }) \
+    ])
+endfunction
+unittestRunTest('testGetGroup')
+
+
+async function testGetGroup_unknown():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('GET', '/getGroup', 'name=Test', null), \
+        ['404 Not Found', {'error': 'UnknownGroup', 'message': 'Unknown group "Test"'}] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [testCouchCall('/group%3ATest')])
+endfunction
+unittestRunTest('testGetGroup_unknown')
+
+
+async function testGetGroup_findError():
+    group = {'_id': 'group:Test', '_rev': '1-abc', 'type': 'group', 'name': 'Test', 'symbols': ['IBM']}
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/group%3ATest', jsonStringify(group))})
+    unittestDeepEqual( \
+        testAction('GET', '/getGroup', 'name=Test', null), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 2)
+endfunction
+unittestRunTest('testGetGroup_findError')
+
+
+async function testSetGroup():
+    fetchData = {}
+    objectSet(fetchData, testCouchURL + '/_all_docs', jsonStringify({'rows': [{'key': 'group:Test', 'error': 'not_found'}]}))
+    objectSet(fetchData, testCouchURL + '/group%3ATest', '{"ok": true}')
+    testMockAll({'systemFetch': fetchData})
+    unittestDeepEqual(testAction('POST', '/setGroup', '', {'name': 'Test', 'symbols': ['ko', 'IBM', 'KO']}), ['200 OK', {}])
+    unittestDeepEqual(unittestMockEnd(), [ \
+        testCouchCall('/_all_docs', {'keys': ['group:Test']}), \
+        testCouchCall('/group%3ATest', {'_id': 'group:Test', 'type': 'group', 'name': 'Test', 'symbols': ['IBM', 'KO']}, 'PUT') \
+    ])
+endfunction
+unittestRunTest('testSetGroup')
+
+
+async function testSetGroup_update():
+    fetchData = {}
+    objectSet(fetchData, testCouchURL + '/_all_docs', jsonStringify({'rows': [{'id': 'group:Test', 'value': {'rev': '1-abc'}}]}))
+    objectSet(fetchData, testCouchURL + '/group%3ATest', '{"ok": true}')
+    testMockAll({'systemFetch': fetchData})
+    unittestDeepEqual(testAction('POST', '/setGroup', '', {'name': 'Test', 'symbols': ['IBM']}), ['200 OK', {}])
+    unittestDeepEqual(arrayGet(unittestMockEnd(), 1), testCouchCall( \
+        '/group%3ATest', {'_id': 'group:Test', '_rev': '1-abc', 'type': 'group', 'name': 'Test', 'symbols': ['IBM']}, 'PUT' \
+    ))
+endfunction
+unittestRunTest('testSetGroup_update')
+
+
+async function testSetGroup_revsError():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('POST', '/setGroup', '', {'name': 'Test', 'symbols': ['IBM']}), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testSetGroup_revsError')
+
+
+async function testSetGroup_saveError():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_all_docs', jsonStringify({'rows': []}))})
+    unittestDeepEqual( \
+        testAction('POST', '/setGroup', '', {'name': 'Test', 'symbols': ['IBM']}), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 2)
+endfunction
+unittestRunTest('testSetGroup_saveError')
+
+
+async function testSetGroup_invalidInput():
+    testMockAll({})
+    response = testAction('POST', '/setGroup', '', {'name': '', 'symbols': ['IBM']})
+    unittestEqual(arrayGet(response, 0), '400 Bad Request')
+    unittestEqual(objectGet(arrayGet(response, 1), 'member'), 'name')
+    unittestDeepEqual(unittestMockEnd(), [])
+endfunction
+unittestRunTest('testSetGroup_invalidInput')
+
+
+async function testDeleteGroup():
+    fetchData = {}
+    objectSet(fetchData, testCouchURL + '/_all_docs', jsonStringify({'rows': [{'id': 'group:Test', 'value': {'rev': '1-abc'}}]}))
+    objectSet(fetchData, testCouchURL + '/group%3ATest?rev=1-abc', '{"ok": true}')
+    testMockAll({'systemFetch': fetchData})
+    unittestDeepEqual(testAction('POST', '/deleteGroup', '', {'name': 'Test'}), ['200 OK', {}])
+    unittestDeepEqual(unittestMockEnd(), [ \
+        testCouchCall('/_all_docs', {'keys': ['group:Test']}), \
+        testCouchCall('/group%3ATest?rev=1-abc', null, 'DELETE') \
+    ])
+endfunction
+unittestRunTest('testDeleteGroup')
+
+
+async function testDeleteGroup_unknown():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_all_docs', jsonStringify({'rows': [{'key': 'group:Test', 'error': 'not_found'}]}))})
+    unittestDeepEqual( \
+        testAction('POST', '/deleteGroup', '', {'name': 'Test'}), \
+        ['404 Not Found', {'error': 'UnknownGroup', 'message': 'Unknown group "Test"'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testDeleteGroup_unknown')
+
+
+async function testDeleteGroup_revsError():
+    testMockAll({})
+    unittestDeepEqual( \
+        testAction('POST', '/deleteGroup', '', {'name': 'Test'}), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testDeleteGroup_revsError')
+
+
+async function testDeleteGroup_deleteError():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/_all_docs', jsonStringify({'rows': [{'id': 'group:Test', 'value': {'rev': '1-abc'}}]}))})
+    unittestDeepEqual( \
+        testAction('POST', '/deleteGroup', '', {'name': 'Test'}), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 2)
+endfunction
+unittestRunTest('testDeleteGroup_deleteError')
+
+
+#
 # getRuns tests
 #
 
@@ -473,12 +764,12 @@ async function testGetRuns():
         '_id': 'run1', 'name': 'Run 1', 'created': '2026-10-01T09:00:00-07:00', 'symbols': ['A', 'B'], \
         'endMonth': '2026-06', 'months': 36, 'horizon': 3, 'targets': [10] \
     }
-    run2 = objectAssign(objectCopy(run1), {'_id': 'run2', 'name': 'Run 2', 'created': '2026-10-01T12:00:00-04:00'})
+    run2 = objectAssign(objectCopy(run1), {'_id': 'run2', 'name': 'Run 2', 'created': '2026-10-01T12:00:00-04:00', 'group': 'Test'})
     run3 = objectAssign(objectCopy(run1), {'_id': 'run3', 'name': 'Run 3', 'created': '2026-10-01T08:00:00-07:00'})
     testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': [run3, run1, run2]}))})
     info1 = objectAssign({'id': 'run1'}, run1)
     objectDelete(info1, '_id')
-    info2 = objectAssign(objectCopy(info1), {'id': 'run2', 'name': 'Run 2', 'created': '2026-10-01T12:00:00-04:00'})
+    info2 = objectAssign(objectCopy(info1), {'id': 'run2', 'name': 'Run 2', 'created': '2026-10-01T12:00:00-04:00', 'group': 'Test'})
     info3 = objectAssign(objectCopy(info1), {'id': 'run3', 'name': 'Run 3', 'created': '2026-10-01T08:00:00-07:00'})
     unittestDeepEqual(testAction('GET', '/getRuns', '', null), ['200 OK', {'runs': [info1, info2, info3]}])
     unittestDeepEqual(unittestMockEnd(), [ \
@@ -530,6 +821,23 @@ endfunction
 unittestRunTest('testGetRun')
 
 
+async function testGetRun_excluded():
+    doc = { \
+        '_id': 'run1', '_rev': '1-abc', 'type': 'run', 'name': 'Run 1', 'created': testNowISO, 'symbols': ['A', 'B'], \
+        'group': 'Test', 'endMonth': '2026-06', 'months': 36, 'horizon': 3, 'targets': [10], 'stocks': [], 'portfolios': [], \
+        'excluded': [{'symbol': 'C', 'reason': 'Prices start in 2025-01'}] \
+    }
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/run1', jsonStringify(doc))})
+    unittestDeepEqual(testAction('GET', '/getRun', 'id=run1', null), ['200 OK', {'run': { \
+        'id': 'run1', 'name': 'Run 1', 'created': testNowISO, 'symbols': ['A', 'B'], 'group': 'Test', 'endMonth': '2026-06', \
+        'months': 36, 'horizon': 3, 'targets': [10], 'stocks': [], 'portfolios': [], \
+        'excluded': [{'symbol': 'C', 'reason': 'Prices start in 2025-01'}] \
+    }}])
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testGetRun_excluded')
+
+
 async function testGetRun_unknown():
     testMockAll({})
     unittestDeepEqual( \
@@ -557,23 +865,37 @@ unittestRunTest('testGetRun_notRun')
 #
 
 
+# The createRun test fetch mock data - the "Test" group of stock symbols, and the stock documents and run ID, if any
+function testCreateRunData(symbols, docs, id):
+    group = {'_id': 'group:Test', '_rev': '1-abc', 'type': 'group', 'name': 'Test', 'symbols': symbols}
+    fetchData = objectNew(testCouchURL + '/group%3ATest', jsonStringify(group))
+    if docs != null:
+        objectSet(fetchData, testCouchURL + '/_find', jsonStringify({'docs': docs}))
+    endif
+    if id != null:
+        objectSet(fetchData, testCouchURL, jsonStringify({'ok': true, 'id': id, 'rev': '1-abc'}))
+    endif
+    return {'systemFetch': fetchData}
+endfunction
+
+
+# Get the run document posted by a createRun call log
+function testCreateRunDoc(calls):
+    return jsonParse(objectGet(arrayGet(arrayGet(arrayGet(calls, 2), 1), 0), 'body'))
+endfunction
+
+
 async function testCreateRun():
-    fetchData = {}
-    objectSet(fetchData, testCouchURL + '/_find', jsonStringify({'docs': testStockDocs()}))
-    objectSet(fetchData, testCouchURL, jsonStringify({'ok': true, 'id': 'run1', 'rev': '1-abc'}))
-    testMockAll({'systemFetch': fetchData})
-    request = {'name': 'Test Run', 'symbols': ['d', 'C', 'b', 'A', 'a'], 'endMonth': '2023-01', 'targets': testTargets}
+    testMockAll(testCreateRunData(['D', 'C', 'B', 'A'], testStockDocs(), 'run1'))
+    request = {'name': 'Test Run', 'group': 'Test', 'endMonth': '2023-01', 'targets': testTargets}
     unittestDeepEqual(testAction('POST', '/createRun', '', request), ['200 OK', {'id': 'run1'}])
     calls = unittestMockEnd()
-    unittestEqual(arrayLength(calls), 2)
-    unittestDeepEqual(arrayGet(calls, 0), testCouchCall('/_find', { \
-        'selector': {'type': 'stock', 'symbol': {'$in': testSymbols}}, \
-        'fields': ['symbol', 'lastMonth', 'prices'], \
-        'limit': 100000 \
-    }))
+    unittestEqual(arrayLength(calls), 3)
+    unittestDeepEqual(arrayGet(calls, 0), testCouchCall('/group%3ATest'))
+    unittestDeepEqual(arrayGet(calls, 1), testCreateRunFindCall(testSymbols))
 
     # The run document - the statistics and portfolios match the original program's
-    postRequest = arrayGet(arrayGet(arrayGet(calls, 1), 1), 0)
+    postRequest = arrayGet(arrayGet(arrayGet(calls, 2), 1), 0)
     unittestEqual(objectGet(postRequest, 'url'), testCouchURL)
     unittestDeepEqual(objectGet(postRequest, 'headers'), testCouchHeaders)
     unittestDeepEqual(testRound(jsonParse(objectGet(postRequest, 'body'))), testRound({ \
@@ -581,25 +903,24 @@ async function testCreateRun():
         'name': 'Test Run', \
         'created': testNowISO, \
         'symbols': testSymbols, \
+        'group': 'Test', \
         'endMonth': '2023-01', \
         'months': 36, \
         'horizon': 3, \
         'targets': testTargets, \
         'stocks': testRunStocks, \
-        'portfolios': testRunPortfolios \
+        'portfolios': testRunPortfolios, \
+        'excluded': [] \
     }))
 endfunction
 unittestRunTest('testCreateRun')
 
 
 async function testCreateRun_defaultEndMonth():
-    fetchData = {}
-    objectSet(fetchData, testCouchURL + '/_find', jsonStringify({'docs': testStockDocs()}))
-    objectSet(fetchData, testCouchURL, jsonStringify({'ok': true, 'id': 'run2', 'rev': '1-abc'}))
-    testMockAll({'systemFetch': fetchData})
-    request = {'name': 'Test Run', 'symbols': testSymbols, 'months': 24, 'horizon': 1, 'targets': [20]}
+    testMockAll(testCreateRunData(testSymbols, testStockDocs(), 'run2'))
+    request = {'name': 'Test Run', 'group': 'Test', 'months': 24, 'horizon': 1, 'targets': [20]}
     unittestDeepEqual(testAction('POST', '/createRun', '', request), ['200 OK', {'id': 'run2'}])
-    run = jsonParse(objectGet(arrayGet(arrayGet(arrayGet(unittestMockEnd(), 1), 1), 0), 'body'))
+    run = testCreateRunDoc(unittestMockEnd())
 
     # The projection months have not passed - there are no realized returns
     unittestEqual(objectGet(run, 'endMonth'), '2023-04')
@@ -618,7 +939,7 @@ unittestRunTest('testCreateRun_defaultEndMonth')
 async function testCreateRun_invalidMonth():
     for endMonth in ['2023-13', 'January']:
         testMockAll({})
-        request = {'name': 'Test Run', 'symbols': testSymbols, 'endMonth': endMonth, 'targets': [10]}
+        request = {'name': 'Test Run', 'group': 'Test', 'endMonth': endMonth, 'targets': [10]}
         unittestDeepEqual( \
             testAction('POST', '/createRun', '', request), \
             ['400 Bad Request', {'error': 'InvalidMonth', 'message': 'Invalid end month "' + endMonth + '" - use "YYYY-MM"'}] \
@@ -629,98 +950,137 @@ endfunction
 unittestRunTest('testCreateRun_invalidMonth')
 
 
-async function testCreateRun_tooManyStocks():
+async function testCreateRun_excluded():
+    # E's prices start late, and C is missing a month's price - F is unknown
+    docs = testStockDocs()
+    arrayPush(docs, objectAssign(objectCopy(arrayGet(docs, 0)), {'symbol': 'E', 'firstMonth': '2021-01'}))
+    objectDelete(objectGet(arrayGet(docs, 2), 'prices'), '2021-06')
+    testMockAll(testCreateRunData(['A', 'B', 'C', 'D', 'E', 'F'], docs, 'run3'))
+    request = {'name': 'Group Run', 'group': 'Test', 'endMonth': '2023-01', 'targets': [10]}
+    unittestDeepEqual(testAction('POST', '/createRun', '', request), ['200 OK', {'id': 'run3'}])
+    run = testCreateRunDoc(unittestMockEnd())
+    unittestEqual(objectGet(run, 'group'), 'Test')
+    unittestDeepEqual(objectGet(run, 'symbols'), ['A', 'B', 'D'])
+    unittestDeepEqual(objectGet(run, 'excluded'), [ \
+        {'symbol': 'C', 'reason': 'No price for 2021-06'}, \
+        {'symbol': 'E', 'reason': 'Prices start in 2021-01'}, \
+        {'symbol': 'F', 'reason': 'No prices - update the stock on the Stocks page'} \
+    ])
+endfunction
+unittestRunTest('testCreateRun_excluded')
+
+
+async function testCreateRun_exclude():
+    # B's prices end early - excluded, it doesn't move the default end month. E is unknown.
+    docs = testStockDocs()
+    objectSet(arrayGet(docs, 1), 'lastMonth', '2022-12')
+    testMockAll(testCreateRunData(['A', 'B', 'C', 'D', 'E'], docs, 'run5'))
+    request = {'name': 'Test Run', 'group': 'Test', 'exclude': ['c', 'B', 'E', 'XYZ'], 'targets': [10]}
+    unittestDeepEqual(testAction('POST', '/createRun', '', request), ['200 OK', {'id': 'run5'}])
+    run = testCreateRunDoc(unittestMockEnd())
+    unittestEqual(objectGet(run, 'endMonth'), '2023-04')
+    unittestDeepEqual(objectGet(run, 'symbols'), ['A', 'D'])
+    unittestDeepEqual(objectGet(run, 'excluded'), [ \
+        {'symbol': 'B', 'reason': 'Prices end in 2022-12'}, \
+        {'symbol': 'C', 'reason': 'Excluded by the user'}, \
+        {'symbol': 'E', 'reason': 'No prices - update the stock on the Stocks page'} \
+    ])
+endfunction
+unittestRunTest('testCreateRun_exclude')
+
+
+async function testCreateRun_pricesEnd():
+    docs = testStockDocs()
+    objectSet(arrayGet(docs, 1), 'lastMonth', '2022-12')
+    testMockAll(testCreateRunData(testSymbols, docs, 'run4'))
+    request = {'name': 'Test Run', 'group': 'Test', 'endMonth': '2023-01', 'targets': [10]}
+    unittestDeepEqual(testAction('POST', '/createRun', '', request), ['200 OK', {'id': 'run4'}])
+    run = testCreateRunDoc(unittestMockEnd())
+    unittestDeepEqual(objectGet(run, 'symbols'), ['A', 'C', 'D'])
+    unittestDeepEqual(objectGet(run, 'excluded'), [{'symbol': 'B', 'reason': 'Prices end in 2022-12'}])
+endfunction
+unittestRunTest('testCreateRun_pricesEnd')
+
+
+async function testCreateRun_unknownGroup():
     testMockAll({})
-    request = {'name': 'Test Run', 'symbols': ['A', 'B', 'C', 'D', 'E', 'F', 'G'], 'months': 6, 'targets': [10]}
+    request = {'name': 'Group Run', 'group': 'Test', 'targets': [10]}
+    unittestDeepEqual( \
+        testAction('POST', '/createRun', '', request), \
+        ['404 Not Found', {'error': 'UnknownGroup', 'message': 'Unknown group "Test"'}] \
+    )
+    unittestDeepEqual(unittestMockEnd(), [testCouchCall('/group%3ATest')])
+endfunction
+unittestRunTest('testCreateRun_unknownGroup')
+
+
+async function testCreateRun_tooManyStocks():
+    symbols = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
+    testMockAll(testCreateRunData(symbols, testStockDocs(symbols)))
+    request = {'name': 'Test Run', 'group': 'Test', 'months': 6, 'targets': [10]}
     unittestDeepEqual( \
         testAction('POST', '/createRun', '', request), \
         ['400 Bad Request', {'error': 'TooManyStocks', 'message': 'There are more stocks (7) than months (6)'}] \
     )
-    unittestDeepEqual(unittestMockEnd(), [])
+    unittestEqual(arrayLength(unittestMockEnd()), 2)
 endfunction
 unittestRunTest('testCreateRun_tooManyStocks')
 
 
-async function testCreateRun_unknownStock():
-    testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': arraySlice(testStockDocs(), 1, 3)}))})
-    request = {'name': 'Test Run', 'symbols': testSymbols, 'targets': [10]}
+async function testCreateRun_tooFewStocks():
+    testMockAll(testCreateRunData(testSymbols, arraySlice(testStockDocs(), 1, 2)))
+    request = {'name': 'Test Run', 'group': 'Test', 'targets': [10]}
     unittestDeepEqual( \
         testAction('POST', '/createRun', '', request), \
-        ['404 Not Found', {'error': 'UnknownStock', 'message': 'Unknown stocks: A, D'}] \
+        ['400 Bad Request', {'error': 'TooFewStocks', 'message': 'Fewer than two stocks have prices for the analysis period'}] \
     )
-    unittestEqual(arrayLength(unittestMockEnd()), 1)
+    unittestEqual(arrayLength(unittestMockEnd()), 2)
 endfunction
-unittestRunTest('testCreateRun_unknownStock')
+unittestRunTest('testCreateRun_tooFewStocks')
 
 
-async function testCreateRun_missingData():
-    docs = testStockDocs()
-    objectDelete(objectGet(arrayGet(docs, 2), 'prices'), '2021-06')
-    testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': docs}))})
-    request = {'name': 'Test Run', 'symbols': testSymbols, 'targets': [10]}
+async function testCreateRun_tooFewStocks_noPrices():
+    testMockAll(testCreateRunData(testSymbols, []))
+    request = {'name': 'Test Run', 'group': 'Test', 'targets': [10]}
     unittestDeepEqual( \
         testAction('POST', '/createRun', '', request), \
-        ['400 Bad Request', { \
-            'error': 'MissingData', \
-            'message': 'Stocks without a price for every month from 2020-04 to 2023-04: C' \
-        }] \
+        ['400 Bad Request', {'error': 'TooFewStocks', 'message': 'Fewer than two stocks have prices for the analysis period'}] \
     )
-    unittestEqual(arrayLength(unittestMockEnd()), 1)
+    unittestEqual(arrayLength(unittestMockEnd()), 2)
 endfunction
-unittestRunTest('testCreateRun_missingData')
+unittestRunTest('testCreateRun_tooFewStocks_noPrices')
 
 
 async function testCreateRun_findError():
-    testMockAll({})
-    request = {'name': 'Test Run', 'symbols': testSymbols, 'targets': [10]}
-    unittestDeepEqual( \
-        testAction('POST', '/createRun', '', request), \
-        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
-    )
-    unittestEqual(arrayLength(unittestMockEnd()), 1)
-endfunction
-unittestRunTest('testCreateRun_findError')
-
-
-async function testCreateRun_saveError():
-    testMockAll({'systemFetch': objectNew(testCouchURL + '/_find', jsonStringify({'docs': testStockDocs()}))})
-    request = {'name': 'Test Run', 'symbols': testSymbols, 'targets': [10]}
+    testMockAll(testCreateRunData(testSymbols))
+    request = {'name': 'Test Run', 'group': 'Test', 'targets': [10]}
     unittestDeepEqual( \
         testAction('POST', '/createRun', '', request), \
         ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
     )
     unittestEqual(arrayLength(unittestMockEnd()), 2)
 endfunction
-unittestRunTest('testCreateRun_saveError')
+unittestRunTest('testCreateRun_findError')
 
 
-async function testCreateRun_tooManySymbols():
-    symbols = []
-    while arrayLength(symbols) < 101:
-        arrayPush(symbols, 'S' + arrayLength(symbols))
-    endwhile
-    testMockAll({})
-    request = {'name': 'Test Run', 'symbols': symbols, 'months': 120, 'targets': [10]}
-    response = testAction('POST', '/createRun', '', request)
-    unittestEqual(arrayGet(response, 0), '400 Bad Request')
-    unittestEqual(objectGet(arrayGet(response, 1), 'member'), 'symbols')
-    unittestEqual(stringEndsWith(objectGet(arrayGet(response, 1), 'message'), '[len <= 100] (content)'), true)
-    unittestDeepEqual(unittestMockEnd(), [])
+async function testCreateRun_saveError():
+    testMockAll(testCreateRunData(testSymbols, testStockDocs()))
+    request = {'name': 'Test Run', 'group': 'Test', 'targets': [10]}
+    unittestDeepEqual( \
+        testAction('POST', '/createRun', '', request), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 3)
 endfunction
-unittestRunTest('testCreateRun_tooManySymbols')
+unittestRunTest('testCreateRun_saveError')
 
 
 async function testCreateRun_invalidInput():
     testMockAll({})
-    request = {'name': 'Test Run', 'symbols': ['A'], 'targets': [10]}
-    unittestDeepEqual( \
-        testAction('POST', '/createRun', '', request), \
-        ['400 Bad Request', { \
-            'error': 'InvalidInput', \
-            'member': 'symbols', \
-            'message': 'Invalid value ["A"] (type "array") for member "symbols", expected type "array" [len >= 2] (content)' \
-        }] \
-    )
+    request = {'name': 'Test Run', 'symbols': testSymbols, 'targets': [10]}
+    response = testAction('POST', '/createRun', '', request)
+    unittestEqual(arrayGet(response, 0), '400 Bad Request')
+    unittestEqual(objectGet(arrayGet(response, 1), 'error'), 'InvalidInput')
     unittestDeepEqual(unittestMockEnd(), [])
 endfunction
 unittestRunTest('testCreateRun_invalidInput')

@@ -30,7 +30,7 @@ MARKDOWN_UP_URL := https://craigahobbs.github.io/markdown-up/markdown-up.tar.gz
 
 
 help:
-	@echo "            [lint-backend|lint-frontend|run|test-backend|test-frontend]"
+	@echo "            [init|lint-backend|lint-frontend|reset|run|test-backend|test-frontend]"
 
 
 clean:
@@ -79,7 +79,7 @@ lint: lint-backend lint-frontend
 # -s lints the test runner without executing it (that's the test target).
 .PHONY: lint-backend
 lint-backend: $(DEFAULT_VENV_BUILD) backend/$(APP).bare frontend/$(APP)Types.bare
-	$(DEFAULT_VENV_BIN)/bare -x backend/$(APP).bare test/backend/test*.bare
+	$(DEFAULT_VENV_BIN)/bare -x backend/$(APP).bare backend/$(APP)Admin.bare test/backend/test*.bare
 	$(DEFAULT_VENV_BIN)/bare -s -m test/backend/runTests.bare
 
 
@@ -89,10 +89,24 @@ lint-frontend: $(DEFAULT_VENV_BUILD) frontend/$(APP).bare frontend/$(APP)Types.b
 	$(DEFAULT_VENV_BIN)/bare -s -m test/frontend/runTests.bare
 
 
-# Run the application with waitress
+# Run the application with waitress - fail if CouchDB isn't running or the database doesn't exist (see "make init")
 .PHONY: run
 run: $(DEFAULT_VENV_BUILD) build/markdown-up/VERSION.txt backend/$(APP).bare frontend/$(APP).bare frontend/$(APP)Types.bare
+	$(DEFAULT_VENV_PYTHON) wsgi.py check
 	$(DEFAULT_VENV_BIN)/waitress-serve --host=$(HOST) --port=$(PORT) wsgi:application
+
+
+# Initialize the database - add the CouchDB admin (MARKOWITZ_COUCH_CREDENTIALS), create the database, create the stock
+# groups, and download their stocks' prices. Running it again updates the groups and the prices.
+.PHONY: init
+init: $(DEFAULT_VENV_BUILD) backend/$(APP).bare frontend/$(APP)Types.bare
+	$(DEFAULT_VENV_PYTHON) wsgi.py init
+
+
+# Delete and re-create the database, with the built-in stock groups - "make init" downloads their stocks' prices
+.PHONY: reset
+reset: $(DEFAULT_VENV_BUILD) backend/$(APP).bare frontend/$(APP)Types.bare
+	$(DEFAULT_VENV_PYTHON) wsgi.py reset
 
 
 # Download the MarkdownUp application from the CDN tarball into build/markdown-up/, once. The extraction is

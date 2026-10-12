@@ -1,0 +1,406 @@
+include <unittest.bare>
+include <unittestMock.bare>
+
+
+# The database credentials the host passes to the backend
+markowitzCouchCredentials = 'admin:secret'
+
+
+include '../../backend/markowitzAdmin.bare'
+
+
+# The test server and database URLs and headers
+testAdminServerURL = 'http://127.0.0.1:5984'
+testAdminCouchURL = testAdminServerURL + '/markowitz'
+testAdminHeaders = {'Authorization': 'Basic YWRtaW46c2VjcmV0', 'Content-Type': 'application/json'}
+
+# The test admin session
+testAdminSession = jsonStringify({'ok': true, 'userCtx': {'name': 'admin', 'roles': ['_admin']}})
+
+# The test stock groups
+testAdminGroups = [{'name': 'Group A', 'symbols': ['IBM', 'KO']}, {'name': 'Group B', 'symbols': ['KO']}]
+
+
+# A CouchDB request call log entry
+function testAdminCall(url, method, headers, body):
+    request = {'url': url, 'headers': if(headers != null, headers, testAdminHeaders)}
+    if method != null:
+        objectSet(request, 'method', method)
+    endif
+    if body != null:
+        objectSet(request, 'body', body)
+    endif
+    return ['systemFetch', [request]]
+endfunction
+
+
+# A log call log entry
+function testAdminLog(message):
+    return ['systemLog', [message]]
+endfunction
+
+
+# The server check's call log entries
+testAdminServerCalls = [['systemFetch', [testAdminServerURL + '/']]]
+
+
+# Run an administration command with the test groups - returns [status, call log]
+async function testAdminRun(args, fetchData):
+    groups = markowitzAdminGroups
+    systemGlobalSet('markowitzAdminGroups', testAdminGroups)
+    unittestMockAll({'systemFetch': fetchData})
+    status = markowitzAdmin(args)
+    calls = unittestMockEnd()
+    systemGlobalSet('markowitzAdminGroups', groups)
+    return [status, calls]
+endfunction
+
+
+# The test fetch data, with the server running
+function testAdminFetchData():
+    return objectNew(testAdminServerURL + '/', '{"couchdb": "Welcome"}')
+endfunction
+
+
+# Concatenate arrays
+function testAdminConcat(arrays...):
+    result = []
+    for array in arrays:
+        arrayExtend(result, array)
+    endfor
+    return result
+endfunction
+
+
+#
+# Command tests
+#
+
+
+function testMarkowitzAdminServerURL():
+    unittestEqual(markowitzAdminServerURL, testAdminServerURL)
+endfunction
+unittestRunTest('testMarkowitzAdminServerURL')
+
+
+function testMarkowitzAdminGroups():
+    names = []
+    for group in markowitzAdminGroups:
+        name = objectGet(group, 'name')
+        symbols = objectGet(group, 'symbols')
+        arrayPush(names, name)
+
+        # The symbols are valid, sorted, and unique
+        unittestEqual(objectHas(schemaValidateEx(markowitzTypes, 'setGroup_input', group), 'error'), false)
+        unittestDeepEqual(markowitzSymbols(symbols), symbols)
+    endfor
+    unittestDeepEqual(names, ['Dow 30', 'Magnificent 7', 'Nasdaq-100', 'S&P 100', 'S&P 500'])
+endfunction
+unittestRunTest('testMarkowitzAdminGroups')
+
+
+async function testMarkowitzAdmin_usage():
+    for args in [[], ['unknown'], ['check', 'init']]:
+        unittestDeepEqual(testAdminRun(args, {}), [1, [testAdminLog('usage: python3 wsgi.py {check|init|reset}')]])
+    endfor
+endfunction
+unittestRunTest('testMarkowitzAdmin_usage')
+
+
+async function testMarkowitzAdmin_notRunning():
+    for command in ['check', 'init', 'reset']:
+        unittestDeepEqual(testAdminRun([command], {}), [1, testAdminConcat(testAdminServerCalls, [ \
+            testAdminLog('CouchDB is not running at "http://127.0.0.1:5984" - start it (e.g. "brew services start couchdb")') \
+        ])])
+    endfor
+endfunction
+unittestRunTest('testMarkowitzAdmin_notRunning')
+
+
+#
+# check tests
+#
+
+
+async function testMarkowitzAdminCheck():
+    fetchData = testAdminFetchData()
+    objectSet(fetchData, testAdminCouchURL, '{"db_name": "markowitz"}')
+    unittestDeepEqual(testAdminRun(['check'], fetchData), [0, testAdminConcat(testAdminServerCalls, [ \
+        testAdminCall(testAdminCouchURL), \
+        testAdminLog('The database "http://127.0.0.1:5984/markowitz" is ready') \
+    ])])
+endfunction
+unittestRunTest('testMarkowitzAdminCheck')
+
+
+async function testMarkowitzAdminCheck_noDatabase():
+    unittestDeepEqual(testAdminRun(['check'], testAdminFetchData()), [1, testAdminConcat(testAdminServerCalls, [ \
+        testAdminCall(testAdminCouchURL), \
+        testAdminLog( \
+            'The database "http://127.0.0.1:5984/markowitz" does not exist, or MARKOWITZ_COUCH_CREDENTIALS is not valid - ' + \
+                'run "make init"' \
+        ) \
+    ])])
+endfunction
+unittestRunTest('testMarkowitzAdminCheck_noDatabase')
+
+
+#
+# init tests
+#
+
+
+async function testMarkowitzAdminInit():
+    fetchData = testAdminFetchData()
+    objectSet(fetchData, testAdminServerURL + '/_session', testAdminSession)
+    objectSet(fetchData, testAdminServerURL + '/_users', '{"db_name": "_users"}')
+    objectSet(fetchData, testAdminServerURL + '/_replicator', '{"db_name": "_replicator"}')
+    objectSet(fetchData, testAdminCouchURL, '{"db_name": "markowitz"}')
+    objectSet(fetchData, testAdminCouchURL + '/_all_docs', jsonStringify({'rows': []}))
+    objectSet(fetchData, testAdminCouchURL + '/group%3AGroup%20A', '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL + '/group%3AGroup%20B', '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL + '/_bulk_docs', '[]')
+    result = testAdminRun(['init'], fetchData)
+    unittestEqual(arrayGet(result, 0), 0)
+    logs = []
+    for call in arrayGet(result, 1):
+        if arrayGet(call, 0) == 'systemLog':
+            arrayPush(logs, arrayGet(arrayGet(call, 1), 0))
+        endif
+    endfor
+    unittestDeepEqual(logs, [ \
+        'The admin "admin" exists', \
+        'The database "http://127.0.0.1:5984/_users" exists', \
+        'The database "http://127.0.0.1:5984/_replicator" exists', \
+        'The database "http://127.0.0.1:5984/markowitz" exists', \
+        'Saved the group "Group A" (2 stocks)', \
+        'Saved the group "Group B" (1 stocks)', \
+        'Downloading 2 stocks\' prices...', \
+        'Failed to update IBM: Download failed - is "IBM" a Yahoo Finance symbol?', \
+        'Failed to update KO: Download failed - is "KO" a Yahoo Finance symbol?', \
+        'Updated 0 of 2 stocks' \
+    ])
+endfunction
+unittestRunTest('testMarkowitzAdminInit')
+
+
+async function testMarkowitzAdminInit_updated():
+    fetchData = testAdminFetchData()
+    objectSet(fetchData, testAdminServerURL + '/_session', testAdminSession)
+    objectSet(fetchData, testAdminServerURL + '/_users', '{"db_name": "_users"}')
+    objectSet(fetchData, testAdminServerURL + '/_replicator', '{"db_name": "_replicator"}')
+    objectSet(fetchData, testAdminCouchURL, '{"db_name": "markowitz"}')
+    objectSet(fetchData, testAdminCouchURL + '/_all_docs', jsonStringify({'rows': []}))
+    objectSet(fetchData, testAdminCouchURL + '/group%3AGroup%20A', '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL + '/group%3AGroup%20B', '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL + '/_bulk_docs', '[{"ok": true}]')
+    yahooResponse = jsonStringify({'chart': {'result': [{ \
+        'meta': {'regularMarketTime': 1791576000}, \
+        'timestamp': [1788235200], \
+        'indicators': {'adjclose': [{'adjclose': [12]}]} \
+    }]}})
+    objectSet(fetchData, markowitzYahooURL + 'KO' + markowitzYahooQuery, yahooResponse)
+    calls = arrayGet(testAdminRun(['init'], fetchData), 1)
+    unittestDeepEqual(arrayGet(calls, arrayLength(calls) - 1), testAdminLog('Updated 1 of 2 stocks'))
+endfunction
+unittestRunTest('testMarkowitzAdminInit_updated')
+
+
+async function testMarkowitzAdminInit_addAdmin():
+    fetchData = testAdminFetchData()
+    objectSet(fetchData, testAdminServerURL + '/_session', jsonStringify({'ok': true, 'userCtx': {'name': null, 'roles': []}}))
+    objectSet(fetchData, testAdminServerURL + '/_node/_local/_config/admins/admin', '""')
+    objectSet(fetchData, testAdminServerURL + '/_users', '{"ok": true}')
+    calls = arrayGet(testAdminRun(['init'], fetchData), 1)
+    unittestDeepEqual(arraySlice(calls, 0, 9), testAdminConcat(testAdminServerCalls, [ \
+        testAdminCall(testAdminServerURL + '/_session'), \
+        testAdminCall( \
+            testAdminServerURL + '/_node/_local/_config/admins/admin', 'PUT', {'Content-Type': 'application/json'}, '"secret"' \
+        ), \
+        testAdminLog('Added the admin "admin"'), \
+        testAdminCall(testAdminServerURL + '/_users'), \
+        testAdminLog('The database "http://127.0.0.1:5984/_users" exists'), \
+        testAdminCall(testAdminServerURL + '/_replicator'), \
+        testAdminCall(testAdminServerURL + '/_replicator', 'PUT'), \
+        testAdminLog('Failed to create the database "http://127.0.0.1:5984/_replicator"') \
+    ]))
+    unittestEqual(arrayLength(calls), 9)
+endfunction
+unittestRunTest('testMarkowitzAdminInit_addAdmin')
+
+
+async function testMarkowitzAdminInit_addAdminError():
+    unittestDeepEqual(testAdminRun(['init'], testAdminFetchData()), [1, testAdminConcat(testAdminServerCalls, [ \
+        testAdminCall(testAdminServerURL + '/_session'), \
+        testAdminCall( \
+            testAdminServerURL + '/_node/_local/_config/admins/admin', 'PUT', {'Content-Type': 'application/json'}, '"secret"' \
+        ), \
+        testAdminLog( \
+            'Failed to add the admin "admin" - if CouchDB has an admin, set MARKOWITZ_COUCH_CREDENTIALS to its "user:password"' \
+        ) \
+    ])])
+endfunction
+unittestRunTest('testMarkowitzAdminInit_addAdminError')
+
+
+async function testMarkowitzAdminInit_noCredentials():
+    for credentials in ['', 'admin', ':secret']:
+        systemGlobalSet('markowitzCouchCredentials', credentials)
+        unittestDeepEqual(testAdminRun(['init'], testAdminFetchData()), [1, testAdminConcat(testAdminServerCalls, [ \
+            testAdminLog('Set MARKOWITZ_COUCH_CREDENTIALS to the CouchDB admin\'s "user:password"') \
+        ])])
+    endfor
+    systemGlobalSet('markowitzCouchCredentials', 'admin:secret')
+endfunction
+unittestRunTest('testMarkowitzAdminInit_noCredentials')
+
+
+async function testMarkowitzAdminInit_createDatabase():
+    fetchData = testAdminFetchData()
+    objectSet(fetchData, testAdminServerURL + '/_session', testAdminSession)
+    objectSet(fetchData, testAdminServerURL + '/_users', '{"ok": true}')
+    objectSet(fetchData, testAdminServerURL + '/_replicator', '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL + '/_all_docs', jsonStringify({'rows': []}))
+    calls = arrayGet(testAdminRun(['init'], fetchData), 1)
+    unittestDeepEqual(arraySlice(calls, 7), [ \
+        testAdminCall(testAdminCouchURL), \
+        testAdminCall(testAdminCouchURL, 'PUT'), \
+        testAdminLog('Failed to create the database "http://127.0.0.1:5984/markowitz"') \
+    ])
+endfunction
+unittestRunTest('testMarkowitzAdminInit_createDatabase')
+
+
+async function testMarkowitzAdminInit_groupError():
+    fetchData = testAdminFetchData()
+    objectSet(fetchData, testAdminServerURL + '/_session', testAdminSession)
+    objectSet(fetchData, testAdminServerURL + '/_users', '{"ok": true}')
+    objectSet(fetchData, testAdminServerURL + '/_replicator', '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL, '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL + '/_all_docs', jsonStringify({'rows': []}))
+    result = testAdminRun(['init'], fetchData)
+    unittestEqual(arrayGet(result, 0), 1)
+    calls = arrayGet(result, 1)
+    unittestDeepEqual(arrayGet(calls, arrayLength(calls) - 1), testAdminLog('Failed to save the group "Group A"'))
+endfunction
+unittestRunTest('testMarkowitzAdminInit_groupError')
+
+
+async function testMarkowitzAdminInit_stocksError():
+    fetchData = testAdminFetchData()
+    objectSet(fetchData, testAdminServerURL + '/_session', testAdminSession)
+    objectSet(fetchData, testAdminServerURL + '/_users', '{"ok": true}')
+    objectSet(fetchData, testAdminServerURL + '/_replicator', '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL, '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL + '/_all_docs', jsonStringify({'rows': []}))
+    objectSet(fetchData, testAdminCouchURL + '/group%3AGroup%20A', '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL + '/group%3AGroup%20B', '{"ok": true}')
+    result = testAdminRun(['init'], fetchData)
+    unittestEqual(arrayGet(result, 0), 1)
+    calls = arrayGet(result, 1)
+    unittestDeepEqual(arrayGet(calls, arrayLength(calls) - 1), testAdminLog('Failed to save the stocks'))
+endfunction
+unittestRunTest('testMarkowitzAdminInit_stocksError')
+
+
+#
+# reset tests
+#
+
+
+# Run an administration command with a fetch mock keyed by method and URL (e.g. "DELETE http://...") - returns
+# [status, fetch call log, log call log]
+async function testAdminRunMethods(args, responses):
+    groups = markowitzAdminGroups
+    systemGlobalSet('markowitzAdminGroups', testAdminGroups)
+    fetches = []
+    unittestMockAll()
+    unittestMockOne('systemFetch', systemPartial(testAdminMethodFetch, responses, fetches))
+    status = markowitzAdmin(args)
+    calls = unittestMockEnd()
+    systemGlobalSet('markowitzAdminGroups', groups)
+    return [status, fetches, calls]
+endfunction
+
+function testAdminMethodFetch(responses, fetches, request):
+    arrayPush(fetches, ['systemFetch', [request]])
+    if systemType(request) == 'string':
+        return objectGet(responses, 'GET ' + request)
+    endif
+    method = objectGet(request, 'method', if(objectHas(request, 'body'), 'POST', 'GET'))
+    return objectGet(responses, method + ' ' + objectGet(request, 'url'))
+endfunction
+
+
+async function testMarkowitzAdminReset():
+    responses = {}
+    objectSet(responses, 'GET ' + testAdminServerURL + '/', '{"couchdb": "Welcome"}')
+    objectSet(responses, 'DELETE ' + testAdminCouchURL, '{"ok": true}')
+    objectSet(responses, 'PUT ' + testAdminCouchURL, '{"ok": true}')
+    objectSet(responses, 'POST ' + testAdminCouchURL + '/_all_docs', jsonStringify({'rows': []}))
+    objectSet(responses, 'PUT ' + testAdminCouchURL + '/group%3AGroup%20A', '{"ok": true}')
+    objectSet(responses, 'PUT ' + testAdminCouchURL + '/group%3AGroup%20B', '{"ok": true}')
+    unittestDeepEqual(testAdminRunMethods(['reset'], responses), [ \
+        0, \
+        testAdminConcat(testAdminServerCalls, [ \
+            testAdminCall(testAdminCouchURL, 'DELETE'), \
+            testAdminCall(testAdminCouchURL), \
+            testAdminCall(testAdminCouchURL, 'PUT'), \
+            testAdminCall(testAdminCouchURL + '/_all_docs', null, null, '{"keys":["group:Group A"]}'), \
+            testAdminCall( \
+                testAdminCouchURL + '/group%3AGroup%20A', 'PUT', null, \
+                '{"_id":"group:Group A","name":"Group A","symbols":["IBM","KO"],"type":"group"}' \
+            ), \
+            testAdminCall(testAdminCouchURL + '/_all_docs', null, null, '{"keys":["group:Group B"]}'), \
+            testAdminCall( \
+                testAdminCouchURL + '/group%3AGroup%20B', 'PUT', null, \
+                '{"_id":"group:Group B","name":"Group B","symbols":["KO"],"type":"group"}' \
+            ) \
+        ]), \
+        [ \
+            testAdminLog('Deleted the database "http://127.0.0.1:5984/markowitz"'), \
+            testAdminLog('Created the database "http://127.0.0.1:5984/markowitz"'), \
+            testAdminLog('Saved the group "Group A" (2 stocks)'), \
+            testAdminLog('Saved the group "Group B" (1 stocks)'), \
+            testAdminLog('Run "make init" to download the groups\' stocks\' prices') \
+        ] \
+    ])
+endfunction
+
+
+async function testMarkowitzAdminReset_groupError():
+    responses = {}
+    objectSet(responses, 'GET ' + testAdminServerURL + '/', '{"couchdb": "Welcome"}')
+    objectSet(responses, 'DELETE ' + testAdminCouchURL, '{"ok": true}')
+    objectSet(responses, 'PUT ' + testAdminCouchURL, '{"ok": true}')
+    result = testAdminRunMethods(['reset'], responses)
+    unittestEqual(arrayGet(result, 0), 1)
+    unittestDeepEqual(arraySlice(arrayGet(result, 2), 2), [testAdminLog('Failed to save the group "Group A"')])
+endfunction
+unittestRunTest('testMarkowitzAdminReset_groupError')
+unittestRunTest('testMarkowitzAdminReset')
+
+
+async function testMarkowitzAdminReset_noDatabase():
+    unittestDeepEqual(testAdminRun(['reset'], testAdminFetchData()), [1, testAdminConcat(testAdminServerCalls, [ \
+        testAdminCall(testAdminCouchURL, 'DELETE'), \
+        testAdminCall(testAdminCouchURL), \
+        testAdminCall(testAdminCouchURL), \
+        testAdminCall(testAdminCouchURL, 'PUT'), \
+        testAdminLog('Failed to create the database "http://127.0.0.1:5984/markowitz"') \
+    ])])
+endfunction
+unittestRunTest('testMarkowitzAdminReset_noDatabase')
+
+
+async function testMarkowitzAdminReset_deleteError():
+    responses = {}
+    objectSet(responses, 'GET ' + testAdminServerURL + '/', '{"couchdb": "Welcome"}')
+    objectSet(responses, 'GET ' + testAdminCouchURL, '{"db_name": "markowitz"}')
+    unittestDeepEqual(testAdminRunMethods(['reset'], responses), [ \
+        1, \
+        testAdminConcat(testAdminServerCalls, [testAdminCall(testAdminCouchURL, 'DELETE'), testAdminCall(testAdminCouchURL)]), \
+        [testAdminLog('Failed to delete the database "http://127.0.0.1:5984/markowitz"')] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzAdminReset_deleteError')

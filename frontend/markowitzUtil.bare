@@ -39,3 +39,53 @@ function markowitzMonthString(monthIndex):
     monthNumber = monthIndex % 12 + 1
     return mathFloor(monthIndex / 12) + '-' + if(monthNumber < 10, '0', '') + monthNumber
 endfunction
+
+
+#
+# Runs
+#
+
+
+# Get a run's default end month index - the last month for which every stock has a price. The stocks are a map of
+# symbol to stock summary ("lastMonth"). Returns null if no stock has prices.
+function markowitzRunEndIndex(symbols, stocks):
+    endIndex = null
+    for symbol in symbols:
+        stock = objectGet(stocks, symbol)
+        if stock != null:
+            lastIndex = markowitzMonthIndex(objectGet(stock, 'lastMonth'))
+            endIndex = if(endIndex == null, lastIndex, mathMin(endIndex, lastIndex))
+        endif
+    endfor
+    return endIndex
+endfunction
+
+
+# Select a run's stocks - the stocks with prices from the analysis period's start month (the month before its first
+# month) to its end month. The stocks are a map of symbol to stock summary ("firstMonth" and "lastMonth"). The end
+# month index defaults to the last month for which every stock has a price. Returns {"endIndex": monthIndex,
+# "symbols": symbols, "excluded": exclusions} - the end month index is null if no stock has prices.
+function markowitzRunSelect(symbols, stocks, endIndex, months):
+    endIndex = if(endIndex != null, endIndex, markowitzRunEndIndex(symbols, stocks))
+
+    # Exclude the stocks without prices for the analysis period
+    included = []
+    excluded = []
+    for symbol in symbols:
+        stock = objectGet(stocks, symbol)
+        reason = null
+        if stock == null:
+            reason = 'No prices - update the stock on the Stocks page'
+        elif markowitzMonthIndex(objectGet(stock, 'firstMonth')) > endIndex - months:
+            reason = 'Prices start in ' + objectGet(stock, 'firstMonth')
+        elif markowitzMonthIndex(objectGet(stock, 'lastMonth')) < endIndex:
+            reason = 'Prices end in ' + objectGet(stock, 'lastMonth')
+        endif
+        if reason != null:
+            arrayPush(excluded, {'symbol': symbol, 'reason': reason})
+        else:
+            arrayPush(included, symbol)
+        endif
+    endfor
+    return {'endIndex': endIndex, 'symbols': included, 'excluded': excluded}
+endfunction

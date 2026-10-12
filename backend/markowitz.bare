@@ -20,11 +20,14 @@ markowitzYahooURL = 'https://query1.finance.yahoo.com/v8/finance/chart/'
 markowitzYahooQuery = '?period1=-2208988800&period2=9999999999&interval=1mo'
 markowitzYahooHeaders = {'User-Agent': 'Mozilla/5.0 (compatible; Markowitz)'}
 
+# The number of stock price downloads made at once
+markowitzDownloadBatchSize = 10
+
 # The stock summary fields
 markowitzStockInfoFields = ['symbol', 'name', 'currency', 'firstMonth', 'lastMonth', 'monthCount', 'updated']
 
 # The run summary fields
-markowitzRunInfoFields = ['_id', 'name', 'created', 'symbols', 'endMonth', 'months', 'horizon', 'targets']
+markowitzRunInfoFields = ['_id', 'name', 'created', 'symbols', 'group', 'endMonth', 'months', 'horizon', 'targets']
 
 # The magnitude below which a pivot is zero - the matrix is singular
 markowitzSingularEpsilon = 1e-9
@@ -59,9 +62,40 @@ endfunction
 
 
 async function updateStocks(request):
-    symbols = markowitzSymbols(objectGet(request, 'symbols'))
+    symbols = arrayCopy(objectGet(request, 'symbols', []))
 
-    # Download the stocks' monthly prices, in parallel
+    # The group's stocks
+    groupName = objectGet(request, 'group')
+    if groupName != null:
+        group = markowitzDBGet(markowitzGroupID(groupName))
+        if group == null:
+            return markowitzUnknownGroup(groupName)
+        endif
+        arrayExtend(symbols, objectGet(group, 'symbols'))
+    endif
+
+    # Every stock in the database
+    if objectGet(request, 'all'):
+        docs = markowitzDBFind({'type': 'stock'}, ['symbol'])
+        if docs == null:
+            return markowitzDatabaseError()
+        endif
+        for doc in docs:
+            arrayPush(symbols, objectGet(doc, 'symbol'))
+        endfor
+    endif
+
+    return markowitzDownloadStocks(markowitzSymbols(symbols))
+endfunction
+
+
+# Download stocks' monthly prices and add or update them in the database - returns the updateStocks response
+async function markowitzDownloadStocks(symbols):
+    if !arrayLength(symbols):
+        return {'results': []}
+    endif
+
+    # Download the stocks' monthly prices, a batch at a time
     downloadRequests = []
     ids = []
     for symbol in symbols:
@@ -69,7 +103,13 @@ async function updateStocks(request):
         arrayPush(downloadRequests, {'url': url, 'headers': markowitzYahooHeaders})
         arrayPush(ids, markowitzStockID(symbol))
     endfor
-    downloads = systemFetch(downloadRequests)
+    downloads = []
+    ixBatch = 0
+    while ixBatch < arrayLength(downloadRequests):
+        ixBatchEnd = mathMin(ixBatch + markowitzDownloadBatchSize, arrayLength(downloadRequests))
+        arrayExtend(downloads, systemFetch(arraySlice(downloadRequests, ixBatch, ixBatchEnd)))
+        ixBatch = ixBatchEnd
+    endwhile
 
     # Get the existing stock documents' revisions
     revs = markowitzDBRevs(ids)
@@ -135,6 +175,76 @@ async function deleteStock(request):
 endfunction
 
 
+async function getGroups():
+    docs = markowitzDBFind({'type': 'group'}, ['name', 'symbols'])
+    if docs == null:
+        return markowitzDatabaseError()
+    endif
+    groups = []
+    for doc in docs:
+        arrayPush(groups, {'name': objectGet(doc, 'name'), 'symbols': objectGet(doc, 'symbols')})
+    endfor
+    return {'groups': arraySort(groups, markowitzCompareName)}
+endfunction
+
+
+async function getGroup(request):
+    name = objectGet(request, 'name')
+    doc = markowitzDBGet(markowitzGroupID(name))
+    if doc == null:
+        return markowitzUnknownGroup(name)
+    endif
+    symbols = objectGet(doc, 'symbols')
+    stockDocs = markowitzDBFind({'type': 'stock', 'symbol': {'$in': symbols}}, markowitzStockInfoFields)
+    if stockDocs == null:
+        return markowitzDatabaseError()
+    endif
+    stocks = []
+    for stockDoc in stockDocs:
+        arrayPush(stocks, markowitzStockInfo(stockDoc))
+    endfor
+    return {'group': {'name': name, 'symbols': symbols}, 'stocks': arraySort(stocks, markowitzCompareSymbol)}
+endfunction
+
+
+async function setGroup(request):
+    if !markowitzSaveGroup(objectGet(request, 'name'), objectGet(request, 'symbols')):
+        return markowitzDatabaseError()
+    endif
+endfunction
+
+
+# Create or update a stock group document - returns true on success
+async function markowitzSaveGroup(name, symbols):
+    id = markowitzGroupID(name)
+    revs = markowitzDBRevs([id])
+    if revs == null:
+        return false
+    endif
+    doc = {'_id': id, 'type': 'group', 'name': name, 'symbols': markowitzSymbols(symbols)}
+    if objectHas(revs, id):
+        objectSet(doc, '_rev', objectGet(revs, id))
+    endif
+    return markowitzDBPut(doc)
+endfunction
+
+
+async function deleteGroup(request):
+    name = objectGet(request, 'name')
+    id = markowitzGroupID(name)
+    revs = markowitzDBRevs([id])
+    if revs == null:
+        return markowitzDatabaseError()
+    endif
+    if !objectHas(revs, id):
+        return markowitzUnknownGroup(name)
+    endif
+    if !markowitzDBDelete(id, objectGet(revs, id)):
+        return markowitzDatabaseError()
+    endif
+endfunction
+
+
 async function getRuns():
     docs = markowitzDBFind({'type': 'run'}, markowitzRunInfoFields)
     if docs == null:
@@ -157,22 +267,18 @@ async function getRun(request):
     run = markowitzRunInfo(doc)
     objectSet(run, 'stocks', objectGet(doc, 'stocks'))
     objectSet(run, 'portfolios', objectGet(doc, 'portfolios'))
+    if objectHas(doc, 'excluded'):
+        objectSet(run, 'excluded', objectGet(doc, 'excluded'))
+    endif
     return {'run': run}
 endfunction
 
 
 async function createRun(request):
-    symbols = markowitzSymbols(objectGet(request, 'symbols'))
+    groupName = objectGet(request, 'group')
     months = objectGet(request, 'months', 36)
     horizon = objectGet(request, 'horizon', 3)
     targets = objectGet(request, 'targets')
-
-    # The covariance matrix of the residuals about the stocks' trends is singular if there are more stocks than months
-    if arrayLength(symbols) > months:
-        return wsgiActionError( \
-            'TooManyStocks', 'There are more stocks (' + arrayLength(symbols) + ') than months (' + months + ')' \
-        )
-    endif
 
     # Parse the end month
     endMonth = objectGet(request, 'endMonth')
@@ -181,65 +287,85 @@ async function createRun(request):
         return wsgiActionError('InvalidMonth', 'Invalid end month "' + endMonth + '" - use "YYYY-MM"')
     endif
 
+    # Get the group's stocks
+    group = markowitzDBGet(markowitzGroupID(groupName))
+    if group == null:
+        return markowitzUnknownGroup(groupName)
+    endif
+    symbols = markowitzSymbols(objectGet(group, 'symbols'))
+    exclude = markowitzSymbols(objectGet(request, 'exclude', []))
+
     # Get the stocks' prices
-    docs = markowitzDBFind({'type': 'stock', 'symbol': {'$in': symbols}}, ['symbol', 'lastMonth', 'prices'])
+    docs = markowitzDBFind({'type': 'stock', 'symbol': {'$in': symbols}}, ['symbol', 'firstMonth', 'lastMonth', 'prices'])
     if docs == null:
         return markowitzDatabaseError()
     endif
-    stockPrices = {}
-    lastIndex = null
+    stocks = {}
     for doc in docs:
-        objectSet(stockPrices, objectGet(doc, 'symbol'), objectGet(doc, 'prices'))
-        docLastIndex = markowitzMonthIndex(objectGet(doc, 'lastMonth'))
-        lastIndex = if(lastIndex == null, docLastIndex, mathMin(lastIndex, docLastIndex))
+        objectSet(stocks, objectGet(doc, 'symbol'), doc)
     endfor
-    unknown = []
-    for symbol in symbols:
-        if !objectHas(stockPrices, symbol):
-            arrayPush(unknown, symbol)
-        endif
-    endfor
-    if arrayLength(unknown):
-        return wsgiActionError('UnknownStock', 'Unknown stocks: ' + arrayJoin(unknown, ', '), '404 Not Found')
+
+    # The end month defaults to the last month for which every stock, not excluded, has a price
+    if endIndex == null:
+        includedSymbols = []
+        for symbol in symbols:
+            if arrayIndexOf(exclude, symbol) == -1:
+                arrayPush(includedSymbols, symbol)
+            endif
+        endfor
+        endIndex = markowitzRunEndIndex(includedSymbols, stocks)
     endif
 
-    # The end month defaults to the last month for which every stock has a price
-    endIndex = if(endIndex != null, endIndex, lastIndex)
+    # Select the stocks with prices for the analysis period - an excluded stock without prices keeps its reason
+    selection = markowitzRunSelect(symbols, stocks, endIndex, months)
+    excluded = objectGet(selection, 'excluded')
 
-    # Compute the stocks' monthly price relatives over the analysis period and the projection
+    # Compute the stocks' monthly price relatives over the analysis period and the projection - exclude the stocks
+    # missing a month's price
+    runSymbols = []
     relatives = []
     horizonRelatives = []
-    missing = []
-    for symbol in symbols:
-        prices = objectGet(stockPrices, symbol)
-        stockRelatives = markowitzRelatives(prices, endIndex - months, months)
-        if stockRelatives == null:
-            arrayPush(missing, symbol)
+    for symbol in objectGet(selection, 'symbols'):
+        if arrayIndexOf(exclude, symbol) != -1:
+            arrayPush(excluded, {'symbol': symbol, 'reason': 'Excluded by the user'})
+            continue
         endif
-        arrayPush(relatives, stockRelatives)
+        prices = objectGet(objectGet(stocks, symbol), 'prices')
+        missingMonth = markowitzMissingMonth(prices, endIndex - months, endIndex)
+        if missingMonth != null:
+            arrayPush(excluded, {'symbol': symbol, 'reason': 'No price for ' + missingMonth})
+            continue
+        endif
+        arrayPush(runSymbols, symbol)
+        arrayPush(relatives, markowitzRelatives(prices, endIndex - months, months))
         arrayPush(horizonRelatives, markowitzRelatives(prices, endIndex, horizon))
     endfor
-    if arrayLength(missing):
+    if arrayLength(runSymbols) < 2:
+        return wsgiActionError('TooFewStocks', 'Fewer than two stocks have prices for the analysis period')
+    endif
+
+    # The covariance matrix of the residuals about the stocks' trends is singular if there are more stocks than months
+    if arrayLength(runSymbols) > months:
         return wsgiActionError( \
-            'MissingData', \
-            'Stocks without a price for every month from ' + markowitzMonthString(endIndex - months) + ' to ' + \
-                markowitzMonthString(endIndex) + ': ' + arrayJoin(missing, ', ') \
+            'TooManyStocks', 'There are more stocks (' + arrayLength(runSymbols) + ') than months (' + months + ')' \
         )
     endif
 
     # Compute the run and save it
-    analysis = markowitzAnalyze(symbols, relatives, horizonRelatives, horizon, targets)
+    analysis = markowitzAnalyze(runSymbols, relatives, horizonRelatives, horizon, targets)
     run = { \
         'type': 'run', \
         'name': objectGet(request, 'name'), \
         'created': datetimeISOFormat(datetimeNow()), \
-        'symbols': symbols, \
+        'symbols': runSymbols, \
         'endMonth': markowitzMonthString(endIndex), \
         'months': months, \
         'horizon': horizon, \
         'targets': targets, \
         'stocks': objectGet(analysis, 'stocks'), \
-        'portfolios': objectGet(analysis, 'portfolios') \
+        'portfolios': objectGet(analysis, 'portfolios'), \
+        'group': groupName, \
+        'excluded': arraySort(excluded, markowitzCompareSymbol) \
     }
     id = markowitzDBPost(run)
     if id == null:
@@ -270,6 +396,10 @@ function markowitzUnknownStock(symbol):
     return wsgiActionError('UnknownStock', 'Unknown stock "' + symbol + '"', '404 Not Found')
 endfunction
 
+function markowitzUnknownGroup(name):
+    return wsgiActionError('UnknownGroup', 'Unknown group "' + name + '"', '404 Not Found')
+endfunction
+
 function markowitzUnknownRun(id):
     return wsgiActionError('UnknownRun', 'Unknown run "' + id + '"', '404 Not Found')
 endfunction
@@ -278,6 +408,12 @@ endfunction
 # Get a stock's document ID
 function markowitzStockID(symbol):
     return 'stock:' + symbol
+endfunction
+
+
+# Get a group's document ID
+function markowitzGroupID(name):
+    return 'group:' + name
 endfunction
 
 
@@ -298,7 +434,10 @@ endfunction
 function markowitzRunInfo(doc):
     info = {'id': objectGet(doc, '_id')}
     for field in arraySlice(markowitzRunInfoFields, 1):
-        objectSet(info, field, objectGet(doc, field))
+        value = objectGet(doc, field)
+        if value != null:
+            objectSet(info, field, value)
+        endif
     endfor
     return info
 endfunction
@@ -307,6 +446,10 @@ endfunction
 # Sort comparison functions
 function markowitzCompareSymbol(a, b):
     return systemCompare(objectGet(a, 'symbol'), objectGet(b, 'symbol'))
+endfunction
+
+function markowitzCompareName(a, b):
+    return systemCompare(objectGet(a, 'name'), objectGet(b, 'name'))
 endfunction
 
 function markowitzCompareCreatedDescending(a, b):
@@ -373,6 +516,20 @@ function markowitzParseYahoo(responseText):
         'monthCount': arrayLength(months), \
         'prices': prices \
     }
+endfunction
+
+
+# Get the first month, from a start month to an end month, without a price - null if every month has a price
+function markowitzMissingMonth(prices, startIndex, endIndex):
+    monthIndex = startIndex
+    while monthIndex <= endIndex:
+        month = markowitzMonthString(monthIndex)
+        if !objectHas(prices, month):
+            return month
+        endif
+        monthIndex = monthIndex + 1
+    endwhile
+    return null
 endfunction
 
 
@@ -506,10 +663,11 @@ function markowitzPortfolio(symbols, covariance, expected, growths, horizon, tar
         arrayPush(stockIndexes, arrayLength(stockIndexes))
     endwhile
     deleted = []
+    deletedWeights = []
     while true:
         weights = markowitzSolve(markowitzSystem(covariance, expected, stockIndexes, targetMonthly))
         if weights == null:
-            return {'target': target, 'solved': false, 'allocations': [], 'deleted': deleted}
+            return {'target': target, 'solved': false, 'allocations': [], 'deleted': deleted, 'deletedWeights': deletedWeights}
         endif
 
         # Find the most negative weight - if none, done
@@ -528,6 +686,7 @@ function markowitzPortfolio(symbols, covariance, expected, growths, horizon, tar
 
         # Delete the stock from the portfolio
         arrayPush(deleted, arrayGet(symbols, arrayGet(stockIndexes, ixMinimum)))
+        arrayPush(deletedWeights, weightMinimum)
         arrayDelete(stockIndexes, ixMinimum)
     endwhile
 
@@ -545,7 +704,14 @@ function markowitzPortfolio(symbols, covariance, expected, growths, horizon, tar
         stockGrowth = arrayGet(growths, stockIndex)
         growth = if(growth != null && stockGrowth != null, growth + weight * stockGrowth)
     endfor
-    portfolio = {'target': target, 'solved': true, 'allocations': allocations, 'deleted': deleted, 'variance': variance}
+    portfolio = { \
+        'target': target, \
+        'solved': true, \
+        'allocations': allocations, \
+        'deleted': deleted, \
+        'deletedWeights': deletedWeights, \
+        'variance': variance \
+    }
     if growth != null:
         objectSet(portfolio, 'realizedReturn', markowitzAnnualReturn(growth, 12 / horizon))
     endif
@@ -647,6 +813,13 @@ async function markowitzDBGet(id):
 endfunction
 
 
+# Create or update a document (an update has the current "_rev") - returns true on success
+async function markowitzDBPut(doc):
+    url = markowitzCouchURL + '/' + urlEncodeComponent(objectGet(doc, '_id'))
+    return systemFetch({'url': url, 'method': 'PUT', 'headers': markowitzCouchHeaders, 'body': jsonStringify(doc)}) != null
+endfunction
+
+
 # Create a document with a database-assigned ID - returns the ID, or null on failure
 async function markowitzDBPost(doc):
     responseJSON = systemFetch({'url': markowitzCouchURL, 'headers': markowitzCouchHeaders, 'body': jsonStringify(doc)})
@@ -709,6 +882,10 @@ markowitzRequests = [ \
     {'type': 'action', 'name': 'getStock', 'path': '/getStock'}, \
     {'type': 'action', 'name': 'updateStocks', 'path': '/updateStocks'}, \
     {'type': 'action', 'name': 'deleteStock', 'path': '/deleteStock'}, \
+    {'type': 'action', 'name': 'getGroups', 'path': '/getGroups'}, \
+    {'type': 'action', 'name': 'getGroup', 'path': '/getGroup'}, \
+    {'type': 'action', 'name': 'setGroup', 'path': '/setGroup'}, \
+    {'type': 'action', 'name': 'deleteGroup', 'path': '/deleteGroup'}, \
     {'type': 'action', 'name': 'getRuns', 'path': '/getRuns'}, \
     {'type': 'action', 'name': 'getRun', 'path': '/getRun'}, \
     {'type': 'action', 'name': 'createRun', 'path': '/createRun'}, \

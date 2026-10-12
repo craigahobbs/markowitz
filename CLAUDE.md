@@ -16,10 +16,16 @@ API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
   called from `frontend/markowitz.md`
 - `frontend/markowitzTypes.bare` - the API's Schema Markdown types, `markowitzTypes`, shared by the backend and
   frontend
-- `frontend/markowitzUtil.bare` - the month and stock symbol helpers, shared by the backend and frontend
-- Persistence is CouchDB - one database (default `http://127.0.0.1:5984/markowitz`) of `stock` and `run` documents.
-  `wsgi.py` reads the `MARKOWITZ_COUCH_URL` and `MARKOWITZ_COUCH_CREDENTIALS` ("user:password") environment
-  variables. Stock prices are downloaded from Yahoo Finance's chart API by the `updateStocks` action.
+- `frontend/markowitzUtil.bare` - the month, stock symbol, and run stock selection (`markowitzRunSelect`) helpers,
+  shared by the backend and frontend
+- Persistence is CouchDB - one database (default `http://127.0.0.1:5984/markowitz`) of `stock`, `group` (stock groups,
+  e.g. "S&P 100"), and `run` documents. `wsgi.py` reads the `MARKOWITZ_COUCH_URL` and `MARKOWITZ_COUCH_CREDENTIALS`
+  ("user:password") environment variables. Stock prices are downloaded from Yahoo Finance's chart API by the
+  `updateStocks` action - stock symbols, a group's stocks, or every stock.
+- `backend/markowitzAdmin.bare` - the database administration commands (`markowitzAdmin(args)`): `check`, `init`, and
+  `reset`. `python3 wsgi.py check|init|reset` runs them with the same environment variables; the Makefile's `run`,
+  `init`, and `reset` targets call it. Both save the built-in stock groups, `backend/markowitzGroups.json` (Yahoo
+  Finance symbols, e.g. "BRK-B" - edit it to update an index's members).
 - `original/` - the 1967 Fortran program scans that the backend's analysis (`markowitzAnalyze`) ports
 - `wsgi.py` - the WSGI application, which `make run` serves with waitress (named `wsgi`, not `markowitz`, so it
   can't collide with a Python module of the same name). It reads the application
@@ -68,7 +74,12 @@ unit-test and mocking pattern.
   runs one test)
 - `make lint` - lint every script standalone - `make lint-backend` and `make lint-frontend` lint one side
 - `make run` - serve the application at <http://127.0.0.1:8080/> with waitress (for the user, not for a coding
-  agent - it starts a server that never returns)
+  agent - it starts a server that never returns). It fails first if CouchDB isn't running or the database doesn't
+  exist.
+- `make init` - add the CouchDB admin (if CouchDB has none), create the database, create the stock groups, and download
+  their stocks' prices - re-running it updates them
+- `make reset` - delete and re-create the database, with the built-in stock groups - destructive; `make init`
+  downloads the stocks' prices
 - `make clean` - remove the build directory and the downloaded python-build `Makefile.tool`
 
 `make commit`, `make test`, and `make lint` depend on `backend/markowitz.bare`, `frontend/markowitz.bare`, and `frontend/markowitzTypes.bare`, which the Makefile
