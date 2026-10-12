@@ -316,19 +316,10 @@ async function createRun(request):
         objectSet(stocks, objectGet(doc, 'symbol'), doc)
     endfor
 
-    # The end month defaults to the last month for which every stock, not excluded, has a price
-    if endIndex == null:
-        includedSymbols = []
-        for symbol in symbols:
-            if arrayIndexOf(exclude, symbol) == -1:
-                arrayPush(includedSymbols, symbol)
-            endif
-        endfor
-        endIndex = markowitzRunEndIndex(includedSymbols, stocks)
-    endif
-
-    # Select the stocks with prices for the analysis period - an excluded stock without prices keeps its reason
-    selection = markowitzRunSelect(symbols, stocks, endIndex, months)
+    # Select the stocks, not excluded, with prices for the analysis period - the end month defaults to the latest month
+    # for which most stocks (not excluded) have a price
+    selection = markowitzRunSelect(symbols, stocks, endIndex, months, exclude)
+    endIndex = objectGet(selection, 'endIndex')
     excluded = objectGet(selection, 'excluded')
 
     # Compute the stocks' monthly price relatives over the analysis period and the projection - exclude the stocks
@@ -337,10 +328,6 @@ async function createRun(request):
     relatives = []
     horizonRelatives = []
     for symbol in objectGet(selection, 'symbols'):
-        if arrayIndexOf(exclude, symbol) != -1:
-            arrayPush(excluded, {'symbol': symbol, 'reason': 'Excluded by the user'})
-            continue
-        endif
         prices = objectGet(objectGet(stocks, symbol), 'prices')
         missingMonth = markowitzMissingMonth(prices, endIndex - months, endIndex)
         if missingMonth != null:

@@ -614,11 +614,13 @@ endfunction
 async function markowitzOnStartRun(args, stocks, groups, group):
     form = markowitzRunFormInputs(group)
 
-    # Create the request - if stocks not excluded don't have prices for the analysis period, update the excluded stocks
-    # and start the run on the next click
+    # Create the request - if stocks not excluded don't have prices for the analysis period, add them to the excluded
+    # stocks and start the run on the next click
     requestResult = markowitzRunRequest(form, stocks, groups)
     if objectHas(requestResult, 'missing'):
-        markowitzRunFormUpdate(form, stocks, groups, false)
+        exclude = markowitzParseList(objectGet(form, 'exclude'))
+        arrayExtend(exclude, objectGet(requestResult, 'missing'))
+        objectSet(form, 'exclude', arrayJoin(markowitzSymbols(exclude), ' '))
         markowitzNewRunPage(args, form, 'Updated the excluded stocks - ' + arrayLength(objectGet(requestResult, 'missing')) + \
             ' of the group\'s stocks don\'t have prices for the analysis period. Click "Start Run" again to start the run.')
         return
@@ -681,24 +683,19 @@ function markowitzRunRequest(form, stocks, groups):
         return {'error': 'Invalid end month "' + endMonth + '" - use "YYYY-MM".'}
     endif
 
-    # The group's stocks, not excluded
+    # Check the run's stocks - the stocks not excluded must have prices for the analysis period
     group = markowitzGroupFind(groups, groupName)
     if group == null:
         return {'error': 'Unknown stock group "' + groupName + '".'}
     endif
-    symbols = []
-    for symbol in objectGet(group, 'symbols'):
-        if arrayIndexOf(exclude, symbol) == -1:
-            arrayPush(symbols, symbol)
-        endif
-    endfor
-
-    # Check the run's stocks - the stocks not excluded must have prices for the analysis period
     months = objectGet(request, 'months')
-    selection = markowitzRunSelect(symbols, markowitzStockMap(stocks), endIndex, months)
+    selection = markowitzRunSelect(objectGet(group, 'symbols'), markowitzStockMap(stocks), endIndex, months, exclude)
     missing = []
     for exclusion in objectGet(selection, 'excluded'):
-        arrayPush(missing, objectGet(exclusion, 'symbol'))
+        symbol = objectGet(exclusion, 'symbol')
+        if arrayIndexOf(exclude, symbol) == -1:
+            arrayPush(missing, symbol)
+        endif
     endfor
     if arrayLength(missing):
         return {'missing': missing}

@@ -46,29 +46,54 @@ endfunction
 #
 
 
-# Get a run's default end month index - the last month for which every stock has a price. The stocks are a map of
-# symbol to stock summary ("lastMonth"). Returns null if no stock has prices.
+# The fraction of a run's stocks with prices through its default end month - the other stocks' prices end earlier
+# (e.g. a delisted or stale stock), so they're excluded rather than ending the analysis period early
+markowitzRunEndFraction = 0.9
+
+
+# Get a run's default end month index - the latest month for which most stocks (the end fraction) have a price, or the
+# last month for which every stock has a price if there are fewer than ten stocks. The stocks are a map of symbol to
+# stock summary ("lastMonth"). Returns null if no stock has prices.
 function markowitzRunEndIndex(symbols, stocks):
-    endIndex = null
+    lastIndexes = []
     for symbol in symbols:
         stock = objectGet(stocks, symbol)
         if stock != null:
-            lastIndex = markowitzMonthIndex(objectGet(stock, 'lastMonth'))
-            endIndex = if(endIndex == null, lastIndex, mathMin(endIndex, lastIndex))
+            arrayPush(lastIndexes, markowitzMonthIndex(objectGet(stock, 'lastMonth')))
         endif
     endfor
-    return endIndex
+    if !arrayLength(lastIndexes):
+        return null
+    endif
+    arraySort(lastIndexes, markowitzCompareDescending)
+    return arrayGet(lastIndexes, mathCeil(markowitzRunEndFraction * arrayLength(lastIndexes)) - 1)
 endfunction
 
 
-# Select a run's stocks - the stocks with prices from the analysis period's start month (the month before its first
-# month) to its end month. The stocks are a map of symbol to stock summary ("firstMonth" and "lastMonth"). The end
-# month index defaults to the last month for which every stock has a price. Returns {"endIndex": monthIndex,
-# "symbols": symbols, "excluded": exclusions} - the end month index is null if no stock has prices.
-function markowitzRunSelect(symbols, stocks, endIndex, months):
-    endIndex = if(endIndex != null, endIndex, markowitzRunEndIndex(symbols, stocks))
+# Compare values in descending order
+function markowitzCompareDescending(a, b):
+    return systemCompare(b, a)
+endfunction
 
-    # Exclude the stocks without prices for the analysis period
+
+# Select a run's stocks - the stocks, not excluded, with prices from the analysis period's start month (the month
+# before its first month) to its end month. The stocks are a map of symbol to stock summary ("firstMonth" and
+# "lastMonth"). The end month index defaults to the stocks' (not excluded) default end month. Returns {"endIndex":
+# monthIndex, "symbols": symbols, "excluded": exclusions} - the end month index is null if no stock has prices. An
+# excluded stock without prices for the analysis period is excluded for its prices.
+function markowitzRunSelect(symbols, stocks, endIndex, months, exclude):
+    exclude = if(exclude != null, exclude, [])
+    if endIndex == null:
+        includedSymbols = []
+        for symbol in symbols:
+            if arrayIndexOf(exclude, symbol) == -1:
+                arrayPush(includedSymbols, symbol)
+            endif
+        endfor
+        endIndex = markowitzRunEndIndex(includedSymbols, stocks)
+    endif
+
+    # Exclude the stocks without prices for the analysis period, and the excluded stocks
     included = []
     excluded = []
     for symbol in symbols:
@@ -80,6 +105,8 @@ function markowitzRunSelect(symbols, stocks, endIndex, months):
             reason = 'Prices start in ' + objectGet(stock, 'firstMonth')
         elif markowitzMonthIndex(objectGet(stock, 'lastMonth')) < endIndex:
             reason = 'Prices end in ' + objectGet(stock, 'lastMonth')
+        elif arrayIndexOf(exclude, symbol) != -1:
+            reason = 'Excluded by the user'
         endif
         if reason != null:
             arrayPush(excluded, {'symbol': symbol, 'reason': reason})

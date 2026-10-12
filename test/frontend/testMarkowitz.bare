@@ -920,7 +920,7 @@ unittestRunTest('testMarkowitzOnStartRun_invalid')
 
 
 async function testMarkowitzOnStartRun_missing():
-    # MSFT has no prices and isn't excluded - the user's excluded stocks are replaced, and the run isn't started
+    # MSFT has no prices and isn't excluded - it's added to the user's excluded stocks, and the run isn't started
     args = {'page': 'new'}
     inputForm = objectAssign(objectCopy(testForm), {'exclude': 'KO'})
     data = testNewRunData()
@@ -929,7 +929,7 @@ async function testMarkowitzOnStartRun_missing():
     markowitzOnStartRun(args, testStocks, testGroups, 'S&P 100')
     calls = unittestMockEnd()
     unittestDeepEqual(arraySlice(calls, 0, 6), testFormInputCalls)
-    form = objectAssign(objectCopy(inputForm), {'group': 'S&P 100', 'exclude': 'MSFT'})
+    form = objectAssign(objectCopy(inputForm), {'group': 'S&P 100', 'exclude': 'KO MSFT'})
     message = 'Updated the excluded stocks - 1 of the group\'s stocks don\'t have prices for the analysis period. ' + \
         'Click "Start Run" again to start the run.'
     unittestDeepEqual(arraySlice(calls, 6), testPageCalls(systemPartial(markowitzNewRunPage, args, form, message), data))
@@ -1231,6 +1231,22 @@ function testMarkowitzRunSelect():
         'excluded': [{'symbol': 'KO', 'reason': 'Prices end in 2026-08'}] \
     })
 
+    # Excluded stocks - an excluded stock without prices for the analysis period is excluded for its prices, and the
+    # end month is the stocks' (not excluded)
+    unittestDeepEqual(markowitzRunSelect(['IBM', 'KO', 'NEW'], stocks, null, 36, ['KO', 'NEW']), { \
+        'endIndex': markowitzMonthIndex('2026-09'), \
+        'symbols': ['IBM'], \
+        'excluded': [ \
+            {'symbol': 'KO', 'reason': 'Prices end in 2026-08'}, \
+            {'symbol': 'NEW', 'reason': 'Prices start in 2025-01'} \
+        ] \
+    })
+    unittestDeepEqual(markowitzRunSelect(['IBM', 'KO'], stocks, markowitzMonthIndex('2026-08'), 36, ['KO']), { \
+        'endIndex': markowitzMonthIndex('2026-08'), \
+        'symbols': ['IBM'], \
+        'excluded': [{'symbol': 'KO', 'reason': 'Excluded by the user'}] \
+    })
+
     # No stock has prices
     unittestDeepEqual(markowitzRunSelect(['XYZ'], stocks, null, 36), { \
         'endIndex': null, \
@@ -1239,6 +1255,26 @@ function testMarkowitzRunSelect():
     })
 endfunction
 unittestRunTest('testMarkowitzRunSelect')
+
+
+function testMarkowitzRunEndIndex():
+    # With fewer than ten stocks, the last month for which every stock has a price
+    stocks = testPriceStocks(arrayNewSize(9, '2000-01'))
+    objectSet(arrayGet(stocks, 4), 'lastMonth', '2019-06')
+    unittestEqual(markowitzRunEndIndex(testStockSymbols(stocks), markowitzStockMap(stocks)), markowitzMonthIndex('2019-06'))
+
+    # With ten stocks, a stock's prices that end early don't end the analysis period early - two stocks' do
+    stocks = testPriceStocks(arrayNewSize(10, '2000-01'))
+    objectSet(arrayGet(stocks, 4), 'lastMonth', '2019-06')
+    unittestEqual(markowitzRunEndIndex(testStockSymbols(stocks), markowitzStockMap(stocks)), markowitzMonthIndex('2026-09'))
+    objectSet(arrayGet(stocks, 7), 'lastMonth', '2020-01')
+    unittestEqual(markowitzRunEndIndex(testStockSymbols(stocks), markowitzStockMap(stocks)), markowitzMonthIndex('2020-01'))
+
+    # Unknown stocks are ignored
+    unittestEqual(markowitzRunEndIndex(['S0', 'XYZ'], markowitzStockMap(stocks)), markowitzMonthIndex('2026-09'))
+    unittestEqual(markowitzRunEndIndex(['XYZ'], markowitzStockMap(stocks)), null)
+endfunction
+unittestRunTest('testMarkowitzRunEndIndex')
 
 
 #

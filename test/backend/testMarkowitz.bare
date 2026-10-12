@@ -989,6 +989,22 @@ endfunction
 unittestRunTest('testCreateRun_exclude')
 
 
+async function testCreateRun_stale():
+    # One of ten stocks' prices end early - it's excluded, rather than ending the analysis period early
+    symbols = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
+    docs = testStockDocs(symbols)
+    objectSet(arrayGet(docs, 5), 'lastMonth', '2022-06')
+    testMockAll(testCreateRunData(symbols, docs, 'run6'))
+    request = {'name': 'Test Run', 'group': 'Test', 'targets': [10]}
+    unittestDeepEqual(testAction('POST', '/createRun', '', request), ['200 OK', {'id': 'run6'}])
+    run = testCreateRunDoc(unittestMockEnd())
+    unittestEqual(objectGet(run, 'endMonth'), '2023-04')
+    unittestEqual(arrayIndexOf(objectGet(run, 'symbols'), 'F'), -1)
+    unittestDeepEqual(objectGet(run, 'excluded'), [{'symbol': 'F', 'reason': 'Prices end in 2022-06'}])
+endfunction
+unittestRunTest('testCreateRun_stale')
+
+
 async function testCreateRun_pricesEnd():
     docs = testStockDocs()
     objectSet(arrayGet(docs, 1), 'lastMonth', '2022-12')

@@ -374,8 +374,8 @@ markowitzTypes = schemaParse( \
     '        # The group\'s stocks to exclude from the run', \
     '        optional Symbol[len <= 1000] exclude', \
     '', \
-    '        # The last month of the analysis period (default is the last month for which every stock, not excluded,', \
-    '        # has a price)', \
+    '        # The last month of the analysis period (default is the latest month for which most stocks, not', \
+    '        # excluded, have a price - stocks whose prices end earlier are excluded)', \
     '        optional Month endMonth', \
     '', \
     '        # The number of months in the analysis period (default is 36)', \
