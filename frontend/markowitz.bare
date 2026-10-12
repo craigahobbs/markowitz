@@ -104,7 +104,8 @@ async function markowitzRunsPage():
     data = []
     for run in runs:
         arrayPush(data, { \
-            'Run': argsLink(markowitzArguments, objectGet(run, 'name'), {'page': 'run', 'id': objectGet(run, 'id')}, true), \
+            'Run': argsLink(markowitzArguments, objectGet(run, 'name'), {'page': 'run', 'id': objectGet(run, 'id')}, true) + \
+                if(objectGet(run, 'running'), ' (incomplete)', ''), \
             'Created': markowitzDatetimeText(objectGet(run, 'created')), \
             'Stocks': stringNew(arrayLength(objectGet(run, 'symbols'))), \
             'Group': objectGet(run, 'group', ''), \
@@ -150,11 +151,21 @@ async function markowitzRunPage(args, message):
         '- **Created:** ' + markowitzDatetimeText(objectGet(run, 'created')), \
         '' \
     )
-    elementModelRender({'html': 'p', 'elem': [ \
+    controls = []
+    if objectGet(run, 'running'):
+        markdownPrint( \
+            '**This run is incomplete** - ' + arrayLength(portfolios) + ' of its ' + arrayLength(objectGet(run, 'targets')) + \
+                ' portfolios are computed. Continue the run to compute the rest.', \
+            '' \
+        )
+        arrayPush(controls, formsLinkButtonElements('Continue', systemPartial(markowitzOnContinueRun, args, run)), {'text': ' | '})
+    endif
+    arrayPush(controls, \
         formsLinkElements('Run Again', argsURL(markowitzArguments, {'page': 'new', 'id': id}, true)), \
         {'text': ' | '}, \
         formsLinkButtonElements('Delete', systemPartial(markowitzOnDeleteRun, args, id)) \
-    ]})
+    )
+    elementModelRender({'html': 'p', 'elem': controls})
 
     # The portfolios table
     portfolioData = []
@@ -307,6 +318,18 @@ function markowitzExcludedRow(symbol, excludedFrom, reason):
         'Excluded From': excludedFrom, \
         'Reason': reason \
     }
+endfunction
+
+
+# Continue an incomplete run - compute the rest of its portfolios
+function markowitzOnContinueRun(args, run):
+    markowitzRunProgress({ \
+        'args': args, \
+        'id': objectGet(run, 'id'), \
+        'name': objectGet(run, 'name'), \
+        'count': arrayLength(objectGet(run, 'portfolios')), \
+        'total': arrayLength(objectGet(run, 'targets')) \
+    })
 endfunction
 
 
@@ -656,7 +679,75 @@ async function markowitzOnStartRunTimeout(args, form, request, stocks, groups):
         markowitzNewRunPage(args, form, 'The run failed.', false, stocks, groups)
         return
     endif
-    windowSetLocation(argsURL(markowitzArguments, {'page': 'run', 'id': objectGet(response, 'id')}, true))
+
+    # Compute the run's portfolios
+    markowitzRunProgress({ \
+        'args': args, \
+        'id': objectGet(response, 'id'), \
+        'name': objectGet(request, 'name'), \
+        'count': 0, \
+        'total': arrayLength(objectGet(request, 'targets')) \
+    })
+endfunction
+
+
+#
+# Run progress - a running run's portfolios are computed a request at a time, each in its own window timeout, so that
+# its progress renders after each portfolio. The progress object has the page's URL arguments ("args"), the run's ID
+# and name, and the counts of its portfolios computed and of its target returns.
+#
+
+
+# Render a running run's progress, and schedule its next portfolio
+function markowitzRunProgress(progress):
+    count = objectGet(progress, 'count')
+    total = objectGet(progress, 'total')
+    markowitzHeader(objectGet(progress, 'name'), null)
+    markdownPrint( \
+        '**Running...** Computed ' + count + ' of ' + total + ' portfolios (' + numberToFixed(100 * count / total, 0) + \
+            '%). A run of many stocks can take a few minutes.', \
+        '' \
+    )
+    elementModelRender({'html': 'p', 'elem': [ \
+        {'html': 'progress', 'attr': {'max': total, 'value': count, 'style': 'width: 30em; max-width: 100%;'}}, \
+        {'text': ' '}, \
+        formsLinkButtonElements('Stop', systemPartial(markowitzOnRunStop, progress)) \
+    ]})
+    windowSetTimeout(systemPartial(markowitzOnRunPortfolio, progress), 0)
+endfunction
+
+
+# Compute a running run's next portfolio - render the progress, or, if done (or failed), the run's page
+async function markowitzOnRunPortfolio(progress):
+    response = markowitzFetch('computeRunPortfolio', {'id': objectGet(progress, 'id')})
+    if response == null:
+        markowitzRunProgressDone(progress, 'Computing the run\'s portfolio failed.')
+        return
+    endif
+    count = objectGet(response, 'portfolios')
+    if count < objectGet(response, 'targets'):
+        objectSet(progress, 'count', count)
+        markowitzRunProgress(progress)
+        return
+    endif
+    markowitzRunProgressDone(progress)
+endfunction
+
+
+# Stop computing a running run's portfolios - render the run's page, where it can be continued
+async function markowitzOnRunStop(progress):
+    markowitzRunProgressDone(progress)
+endfunction
+
+
+# Render a running run's page - from the run's page (continued), render it with the message, otherwise go to it
+async function markowitzRunProgressDone(progress, message):
+    args = objectGet(progress, 'args')
+    if objectGet(args, 'page') == 'run':
+        markowitzRunPage(args, message)
+        return
+    endif
+    windowSetLocation(argsURL(markowitzArguments, {'page': 'run', 'id': objectGet(progress, 'id')}, true))
 endfunction
 
 

@@ -258,6 +258,9 @@ markowitzTypes = schemaParse( \
     '    # The target annual returns, in percent', \
     '    float[] targets', \
     '', \
+    '    # If true, the run\'s portfolios are being computed (see computeRunPortfolio) - absent when complete', \
+    '    optional bool running', \
+    '', \
     '', \
     '# A run - its portfolio stocks\' statistics and a portfolio for each target return', \
     'struct Run (RunInfo)', \
@@ -265,7 +268,7 @@ markowitzTypes = schemaParse( \
     '    # The portfolio stocks\' statistics', \
     '    RunStock[] stocks', \
     '', \
-    '    # The portfolios, one for each target return', \
+    '    # The portfolios, one for each target return (in target return order) - fewer while the run is running', \
     '    Portfolio[] portfolios', \
     '', \
     '    # The stocks excluded from the run - stocks without a price for every month of the analysis period', \
@@ -361,7 +364,8 @@ markowitzTypes = schemaParse( \
     '', \
     '# Start a run - compute the minimum-variance portfolio for each target return from the stocks\' monthly', \
     '# returns, the method of Harry Markowitz, as ported from a 1967 Fortran program. Stocks without a price for', \
-    '# every month of the analysis period are excluded.', \
+    '# every month of the analysis period are excluded. The run is created running, with its stocks\' statistics -', \
+    '# call computeRunPortfolio to compute each of its portfolios.', \
     'action createRun', \
     '    input', \
     '', \
@@ -405,6 +409,31 @@ markowitzTypes = schemaParse( \
     '', \
     '        # There are more stocks than months in the analysis period - the problem is singular', \
     '        TooManyStocks', \
+    '', \
+    '', \
+    '# Compute a running run\'s next portfolio (the next target return\'s) - when every target return has a', \
+    '# portfolio, the run is complete', \
+    'action computeRunPortfolio', \
+    '    input', \
+    '', \
+    '        # The run ID', \
+    '        string id', \
+    '', \
+    '    output', \
+    '', \
+    '        # The number of the run\'s portfolios computed', \
+    '        int portfolios', \
+    '', \
+    '        # The number of the run\'s target returns', \
+    '        int targets', \
+    '', \
+    '    errors (MarkowitzError)', \
+    '', \
+    '        # The run is unknown', \
+    '        UnknownRun', \
+    '', \
+    '        # The run is complete', \
+    '        RunComplete', \
     '', \
     '', \
     '# Delete a run', \

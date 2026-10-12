@@ -315,10 +315,14 @@ async function testAdminRunMethods(args, responses):
     groups = markowitzAdminGroups
     systemGlobalSet('markowitzAdminGroups', testAdminGroups)
     fetches = []
+    originalFetch = systemFetch
     unittestMockAll()
     unittestMockOne('systemFetch', systemPartial(testAdminMethodFetch, responses, fetches))
     status = markowitzAdmin(args)
     calls = unittestMockEnd()
+
+    # unittestMockEnd doesn't restore a function mocked by both unittestMockAll and unittestMockOne
+    systemGlobalSet('systemFetch', originalFetch)
     systemGlobalSet('markowitzAdminGroups', groups)
     return [status, fetches, calls]
 endfunction

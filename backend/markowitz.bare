@@ -32,7 +32,7 @@ markowitzYahooHeaders = {'User-Agent': 'Mozilla/5.0 (compatible; Markowitz)'}
 markowitzStockInfoFields = ['symbol', 'name', 'currency', 'firstMonth', 'lastMonth', 'monthCount', 'updated']
 
 # The run summary fields
-markowitzRunInfoFields = ['_id', 'name', 'created', 'symbols', 'group', 'endMonth', 'months', 'horizon', 'targets']
+markowitzRunInfoFields = ['_id', 'name', 'created', 'symbols', 'group', 'endMonth', 'months', 'horizon', 'targets', 'running']
 
 # Half a day, in seconds
 markowitzHalfDaySeconds = 43200
@@ -340,8 +340,9 @@ async function createRun(request):
         )
     endif
 
-    # Compute the run and save it
-    analysis = markowitzAnalyze(runSymbols, relatives, horizonRelatives, horizon, targets)
+    # Compute the stocks' statistics and save the running run - computeRunPortfolio computes its portfolios, from the
+    # stocks' price relatives, one at a time
+    analysis = markowitzAnalyzeStocks(runSymbols, relatives, horizonRelatives, horizon)
     run = { \
         'type': 'run', \
         'name': objectGet(request, 'name'), \
@@ -352,15 +353,52 @@ async function createRun(request):
         'horizon': horizon, \
         'targets': targets, \
         'stocks': objectGet(analysis, 'stocks'), \
-        'portfolios': objectGet(analysis, 'portfolios'), \
+        'portfolios': [], \
         'group': groupName, \
-        'excluded': arraySort(excluded, markowitzCompareSymbol) \
+        'excluded': arraySort(excluded, markowitzCompareSymbol), \
+        'running': true, \
+        'relatives': relatives, \
+        'horizonRelatives': horizonRelatives \
     }
     id = markowitzDBPost(run)
     if id == null:
         return markowitzDatabaseError()
     endif
     return {'id': id}
+endfunction
+
+
+async function computeRunPortfolio(request):
+    id = objectGet(request, 'id')
+    doc = markowitzDBGet(id)
+    if doc == null || objectGet(doc, 'type') != 'run':
+        return markowitzUnknownRun(id)
+    endif
+    if !objectGet(doc, 'running'):
+        return wsgiActionError('RunComplete', 'The run "' + id + '" is complete')
+    endif
+
+    # Compute the next target return's portfolio
+    symbols = objectGet(doc, 'symbols')
+    horizon = objectGet(doc, 'horizon')
+    analysis = markowitzAnalyzeStocks(symbols, objectGet(doc, 'relatives'), objectGet(doc, 'horizonRelatives'), horizon)
+    portfolios = objectGet(doc, 'portfolios')
+    targets = objectGet(doc, 'targets')
+    arrayPush(portfolios, markowitzPortfolio( \
+        symbols, objectGet(analysis, 'covariance'), objectGet(analysis, 'expected'), objectGet(analysis, 'growths'), \
+        horizon, arrayGet(targets, arrayLength(portfolios)) \
+    ))
+
+    # The run is complete when every target return has a portfolio
+    if arrayLength(portfolios) == arrayLength(targets):
+        objectDelete(doc, 'running')
+        objectDelete(doc, 'relatives')
+        objectDelete(doc, 'horizonRelatives')
+    endif
+    if !markowitzDBPut(doc):
+        return markowitzDatabaseError()
+    endif
+    return {'portfolios': arrayLength(portfolios), 'targets': arrayLength(targets)}
 endfunction
 
 
@@ -548,10 +586,11 @@ endfunction
 #
 
 
-# Compute a run's stock statistics and each target return's portfolio. Each stock's monthly percent returns are
-# regressed on time - the projected return is the trend's return at the end of the projection, and the risk is the
-# variance (and covariance) of the returns about their trend.
-function markowitzAnalyze(symbols, relatives, horizonRelatives, horizon, targets):
+# Compute a run's stock statistics, and the stocks' covariance, projected monthly returns, and growths over the
+# projection (null if its months haven't passed) - each target return's portfolio is computed from them. Each stock's
+# monthly percent returns are regressed on time - the projected return is the trend's return at the end of the
+# projection, and the risk is the variance (and covariance) of the returns about their trend.
+function markowitzAnalyzeStocks(symbols, relatives, horizonRelatives, horizon):
     monthCount = arrayLength(arrayGet(relatives, 0))
     xBar = (monthCount + 1) / 2
     sumX2 = 0
@@ -628,13 +667,7 @@ function markowitzAnalyze(symbols, relatives, horizonRelatives, horizon, targets
         arrayPush(covariance, row)
     endfor
 
-    # Compute each target return's portfolio
-    portfolios = []
-    for target in targets:
-        arrayPush(portfolios, markowitzPortfolio(symbols, covariance, expected, growths, horizon, target))
-    endfor
-
-    return {'stocks': stocks, 'portfolios': portfolios}
+    return {'stocks': stocks, 'covariance': covariance, 'expected': expected, 'growths': growths}
 endfunction
 
 
@@ -880,6 +913,7 @@ markowitzRequests = [ \
     {'type': 'action', 'name': 'getRuns', 'path': '/getRuns'}, \
     {'type': 'action', 'name': 'getRun', 'path': '/getRun'}, \
     {'type': 'action', 'name': 'createRun', 'path': '/createRun'}, \
+    {'type': 'action', 'name': 'computeRunPortfolio', 'path': '/computeRunPortfolio'}, \
     {'type': 'action', 'name': 'deleteRun', 'path': '/deleteRun'} \
 ]
 arrayExtend(markowitzRequests, wsgiStaticRequests(systemGlobalGet('markowitzStatics', {}), '../'))

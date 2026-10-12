@@ -44,7 +44,22 @@ async function testVerifyClick(renderFn, text, expectedFn, data):
 endfunction
 
 
-# Capture a window timeout's callback - mock "windowSetTimeout" with "systemPartial(testCaptureTimeout, callbacks)"
+# Call a function, mocked, and capture its window timeout callbacks - returns the callbacks
+async function testCaptureTimeouts(fn, data):
+    callbacks = []
+    originalSetTimeout = windowSetTimeout
+    unittestMockAll(data)
+    unittestMockOne('windowSetTimeout', systemPartial(testCaptureTimeout, callbacks))
+    fn()
+    unittestMockEnd()
+
+    # unittestMockEnd doesn't restore a function mocked by both unittestMockAll and unittestMockOne
+    systemGlobalSet('windowSetTimeout', originalSetTimeout)
+    return callbacks
+endfunction
+
+
+# Capture a window timeout's callback
 function testCaptureTimeout(callbacks, callback):
     arrayPush(callbacks, callback)
 endfunction

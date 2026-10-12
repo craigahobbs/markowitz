@@ -105,6 +105,14 @@ testRelatives = [ \
 ]
 testSymbols = ['A', 'B', 'C', 'D']
 
+# The test stocks' analysis period (2020-02 through 2023-01) and projection (2023-02 through 2023-04) price relatives
+testAnalysisRelatives = []
+testHorizonRelatives = []
+for testStockRelatives in testRelatives:
+    arrayPush(testAnalysisRelatives, arraySlice(testStockRelatives, 0, 36))
+    arrayPush(testHorizonRelatives, arraySlice(testStockRelatives, 36))
+endfor
+
 # The test target annual returns - the original program's monthly price relative targets, annualized
 testTargets = [markowitzAnnualReturn(1.005, 12), markowitzAnnualReturn(1.015, 12), markowitzAnnualReturn(1.08, 12)]
 
@@ -898,8 +906,11 @@ async function testCreateRun():
         'horizon': 3, \
         'targets': testTargets, \
         'stocks': testRunStocks, \
-        'portfolios': testRunPortfolios, \
-        'excluded': [] \
+        'portfolios': [], \
+        'excluded': [], \
+        'running': true, \
+        'relatives': testAnalysisRelatives, \
+        'horizonRelatives': testHorizonRelatives \
     }))
 endfunction
 unittestRunTest('testCreateRun')
@@ -918,9 +929,7 @@ async function testCreateRun_defaultEndMonth():
     for stock in objectGet(run, 'stocks'):
         unittestEqual(objectHas(stock, 'realizedReturn'), false)
     endfor
-    portfolio = arrayGet(objectGet(run, 'portfolios'), 0)
-    unittestEqual(objectGet(portfolio, 'solved'), true)
-    unittestEqual(objectHas(portfolio, 'realizedReturn'), false)
+    unittestDeepEqual(objectGet(run, 'horizonRelatives'), [null, null, null, null])
 endfunction
 unittestRunTest('testCreateRun_defaultEndMonth')
 
@@ -1092,6 +1101,100 @@ unittestRunTest('testCreateRun_invalidInput')
 
 
 #
+# computeRunPortfolio tests
+#
+
+
+# A test running run document - the test stocks' run with the test portfolios computed so far
+function testRunningDoc(portfolioCount):
+    return { \
+        '_id': 'run1', '_rev': '1-abc', 'type': 'run', 'name': 'Test Run', 'created': testNowISO, 'symbols': testSymbols, \
+        'group': 'Test', 'endMonth': '2023-01', 'months': 36, 'horizon': 3, 'targets': testTargets, \
+        'stocks': testRunStocks, 'portfolios': arraySlice(testRunPortfolios, 0, portfolioCount), 'excluded': [], \
+        'running': true, 'relatives': testAnalysisRelatives, 'horizonRelatives': testHorizonRelatives \
+    }
+endfunction
+
+
+async function testComputeRunPortfolio():
+    fetchData = {}
+    objectSet(fetchData, testCouchURL + '/run1', jsonStringify(testRunningDoc(0)))
+    testMockAll({'systemFetch': fetchData})
+    unittestDeepEqual(testAction('POST', '/computeRunPortfolio', '', {'id': 'run1'}), ['200 OK', {'portfolios': 1, 'targets': 3}])
+    calls = unittestMockEnd()
+    unittestEqual(arrayLength(calls), 2)
+    unittestDeepEqual(arrayGet(calls, 0), testCouchCall('/run1'))
+
+    # The first portfolio matches the original program's
+    putRequest = arrayGet(arrayGet(arrayGet(calls, 1), 1), 0)
+    unittestEqual(objectGet(putRequest, 'url'), testCouchURL + '/run1')
+    unittestEqual(objectGet(putRequest, 'method'), 'PUT')
+    unittestDeepEqual(testRound(jsonParse(objectGet(putRequest, 'body'))), testRound(testRunningDoc(1)))
+endfunction
+unittestRunTest('testComputeRunPortfolio')
+
+
+async function testComputeRunPortfolio_complete():
+    # The last portfolio completes the run - its relatives are removed
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/run1', jsonStringify(testRunningDoc(2)))})
+    unittestDeepEqual(testAction('POST', '/computeRunPortfolio', '', {'id': 'run1'}), ['200 OK', {'portfolios': 3, 'targets': 3}])
+    doc = testRunningDoc(3)
+    objectDelete(doc, 'running')
+    objectDelete(doc, 'relatives')
+    objectDelete(doc, 'horizonRelatives')
+    unittestDeepEqual(testRound(jsonParse(objectGet(arrayGet(arrayGet(arrayGet(unittestMockEnd(), 1), 1), 0), 'body'))), testRound(doc))
+endfunction
+unittestRunTest('testComputeRunPortfolio_complete')
+
+
+async function testComputeRunPortfolio_runComplete():
+    doc = testRunningDoc(3)
+    objectDelete(doc, 'running')
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/run1', jsonStringify(doc))})
+    unittestDeepEqual( \
+        testAction('POST', '/computeRunPortfolio', '', {'id': 'run1'}), \
+        ['400 Bad Request', {'error': 'RunComplete', 'message': 'The run "run1" is complete'}] \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testComputeRunPortfolio_runComplete')
+
+
+async function testComputeRunPortfolio_unknown():
+    testMockAll({'systemFetch': objectNew(testCouchURL + '/stock%3AIBM', jsonStringify({'_id': 'stock:IBM', 'type': 'stock'}))})
+    for id in ['run1', 'stock:IBM']:
+        unittestDeepEqual( \
+            testAction('POST', '/computeRunPortfolio', '', {'id': id}), \
+            ['404 Not Found', {'error': 'UnknownRun', 'message': 'Unknown run "' + id + '"'}] \
+        )
+    endfor
+    unittestEqual(arrayLength(unittestMockEnd()), 2)
+endfunction
+unittestRunTest('testComputeRunPortfolio_unknown')
+
+
+# A fetch mock that fails PUT requests
+function testComputeRunPortfolioFetch(fetchData, request):
+    return if(objectGet(request, 'method') == 'PUT', null, objectGet(fetchData, objectGet(request, 'url')))
+endfunction
+
+
+async function testComputeRunPortfolio_saveError():
+    # The run document is fetched, but its update fails (e.g. a conflict) - mock only systemFetch (unittestMockEnd
+    # doesn't restore a function mocked by both unittestMockAll and unittestMockOne)
+    fetchData = objectNew(testCouchURL + '/run1', jsonStringify(testRunningDoc(0)))
+    unittestMockOne('systemFetch', systemPartial(testComputeRunPortfolioFetch, fetchData))
+    unittestDeepEqual( \
+        testAction('POST', '/computeRunPortfolio', '', {'id': 'run1'}), \
+        ['500 Internal Server Error', {'error': 'DatabaseError', 'message': 'The database request failed'}] \
+    )
+    unittestMockEnd()
+endfunction
+unittestRunTest('testComputeRunPortfolio_saveError')
+
+
+
+#
 # deleteRun tests
 #
 
@@ -1239,15 +1342,23 @@ unittestRunTest('testMarkowitzRelatives')
 #
 
 
-function testMarkowitzAnalyze():
-    relatives = []
-    horizonRelatives = []
-    for stockRelatives in testRelatives:
-        arrayPush(relatives, arraySlice(stockRelatives, 0, 36))
-        arrayPush(horizonRelatives, arraySlice(stockRelatives, 36))
+# Compute a run's stock statistics and each target return's portfolio
+function testAnalyze(symbols, relatives, horizonRelatives, horizon, targets):
+    analysis = markowitzAnalyzeStocks(symbols, relatives, horizonRelatives, horizon)
+    portfolios = []
+    for target in targets:
+        arrayPush(portfolios, markowitzPortfolio( \
+            symbols, objectGet(analysis, 'covariance'), objectGet(analysis, 'expected'), objectGet(analysis, 'growths'), horizon, target \
+        ))
     endfor
+    return {'stocks': objectGet(analysis, 'stocks'), 'portfolios': portfolios}
+endfunction
+
+
+function testMarkowitzAnalyze():
+    # The stocks' statistics and portfolios match the original program's
     unittestDeepEqual( \
-        testRound(markowitzAnalyze(testSymbols, relatives, horizonRelatives, 3, testTargets)), \
+        testRound(testAnalyze(testSymbols, testAnalysisRelatives, testHorizonRelatives, 3, testTargets)), \
         testRound({'stocks': testRunStocks, 'portfolios': testRunPortfolios}) \
     )
 endfunction
@@ -1255,11 +1366,7 @@ unittestRunTest('testMarkowitzAnalyze')
 
 
 function testMarkowitzAnalyze_noHorizon():
-    relatives = []
-    for stockRelatives in arraySlice(testRelatives, 0, 3):
-        arrayPush(relatives, arraySlice(stockRelatives, 0, 36))
-    endfor
-    analysis = markowitzAnalyze(['A', 'B', 'C'], relatives, [[1.1], null, [1.0]], 1, [10])
+    analysis = testAnalyze(['A', 'B', 'C'], arraySlice(testAnalysisRelatives, 0, 3), [[1.1], null, [1.0]], 1, [10])
     stocks = objectGet(analysis, 'stocks')
     unittestEqual(objectHas(arrayGet(stocks, 0), 'realizedReturn'), true)
     unittestEqual(objectHas(arrayGet(stocks, 1), 'realizedReturn'), false)

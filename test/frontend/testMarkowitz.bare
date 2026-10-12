@@ -92,6 +92,32 @@ function testHeaderCalls(title, titleMarkdown, backURL):
 endfunction
 
 
+# A running run's progress page calls
+function testRunProgressCalls(name, count, total, percent):
+    calls = testHeaderCalls(name, name)
+    arrayPush(calls, \
+        ['markdownPrint', [ \
+            '**Running...** Computed ' + count + ' of ' + total + ' portfolios (' + percent + '%). A run of many stocks can ' + \
+                'take a few minutes.', \
+            '' \
+        ]], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            {'html': 'progress', 'attr': {'max': total, 'value': count, 'style': 'width: 30em; max-width: 100%;'}}, \
+            {'text': ' '}, \
+            formsLinkButtonElements('Stop', '<function>') \
+        ]}]], \
+        ['windowSetTimeout', ['<function>', 0]] \
+    )
+    return calls
+endfunction
+
+
+# A test running run's progress - from the new run page, by default
+function testRunProgress(count, args):
+    return {'args': if(args != null, args, {'page': 'new'}), 'id': 'r1', 'name': 'Blue <Chips>', 'count': count, 'total': 3}
+endfunction
+
+
 # A new run form field render call
 function testFormFieldCall(name, label, size, value, change):
     inputID = 'markowitz-' + name
@@ -312,6 +338,16 @@ endfunction
 unittestRunTest('testMarkowitzRunsPage')
 
 
+async function testMarkowitzRunsPage_incomplete():
+    run = objectAssign(objectCopy(testRun), {'running': true})
+    unittestMockAll({'systemFetch': {'getRuns': jsonStringify({'runs': [run]})}})
+    markowitzRunsPage()
+    table = arrayGet(arrayGet(arrayGet(unittestMockEnd(), 3), 1), 0)
+    unittestEqual(stringIndexOf(arrayGet(table, 2), "[Blue \\<Chips\\>](#var.vId='r1'&var.vPage='run') (incomplete)") != -1, true)
+endfunction
+unittestRunTest('testMarkowitzRunsPage_incomplete')
+
+
 async function testMarkowitzRunsPage_empty():
     unittestMockAll({'systemFetch': {'getRuns': jsonStringify({'runs': []})}})
     markowitzRunsPage()
@@ -512,6 +548,51 @@ async function testMarkowitzRunPage_deleteBinding():
     testVerifyClick(systemPartial(markowitzRunPage, args), 'Delete', systemPartial(markowitzOnDeleteRun, args, 'r1'), data)
 endfunction
 unittestRunTest('testMarkowitzRunPage_deleteBinding')
+
+
+# The test run, incomplete - one of its three portfolios computed
+testRunIncomplete = objectCopy(testRun)
+objectSet(testRunIncomplete, 'portfolios', arraySlice(objectGet(testRun, 'portfolios'), 0, 1))
+objectSet(testRunIncomplete, 'running', true)
+
+
+async function testMarkowitzRunPage_incomplete():
+    args = {'page': 'run', 'id': 'r1'}
+    unittestMockAll({'systemFetch': {'getRun?id=r1': jsonStringify({'run': testRunIncomplete})}})
+    markowitzRunPage(args)
+    calls = unittestMockEnd()
+    unittestDeepEqual(arraySlice(calls, 5, 7), [ \
+        ['markdownPrint', [ \
+            '**This run is incomplete** - 1 of its 3 portfolios are computed. Continue the run to compute the rest.', \
+            '' \
+        ]], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            formsLinkButtonElements('Continue', '<function>'), \
+            {'text': ' | '}, \
+            formsLinkElements('Run Again', "#var.vId='r1'&var.vPage='new'"), \
+            {'text': ' | '}, \
+            formsLinkButtonElements('Delete', '<function>') \
+        ]}]] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzRunPage_incomplete')
+
+
+async function testMarkowitzRunPage_continueBinding():
+    args = {'page': 'run', 'id': 'r1'}
+    data = {'systemFetch': {'getRun?id=r1': jsonStringify({'run': testRunIncomplete})}}
+    testVerifyClick(systemPartial(markowitzRunPage, args), 'Continue', systemPartial(markowitzOnContinueRun, args, testRunIncomplete), data)
+endfunction
+unittestRunTest('testMarkowitzRunPage_continueBinding')
+
+
+function testMarkowitzOnContinueRun():
+    args = {'page': 'run', 'id': 'r1'}
+    unittestMockAll()
+    markowitzOnContinueRun(args, testRunIncomplete)
+    unittestDeepEqual(unittestMockEnd(), testPageCalls(systemPartial(markowitzRunProgress, testRunProgress(1, args)), {}))
+endfunction
+unittestRunTest('testMarkowitzOnContinueRun')
 
 
 async function testMarkowitzOnDeleteRun():
@@ -922,25 +1003,101 @@ async function testMarkowitzOnStartRun_timeoutBinding():
     form = objectAssign(objectCopy(testForm), {'group': 'S&P 100', 'exclude': 'msft'})
     request = objectAssign(objectCopy(testRequest), {'group': 'S&P 100', 'exclude': ['MSFT']})
     data = {'documentInputValue': testFormInputs(form), 'systemFetch': {'createRun': '{"id": "r2"}'}}
-    callbacks = []
-    unittestMockAll(data)
-    unittestMockOne('windowSetTimeout', systemPartial(testCaptureTimeout, callbacks))
-    markowitzOnStartRun(args, testStocks, testGroups, 'S&P 100')
-    unittestMockEnd()
+    callbacks = testCaptureTimeouts(systemPartial(markowitzOnStartRun, args, testStocks, testGroups, 'S&P 100'), data)
     testSameEffect(arrayGet(callbacks, 0), systemPartial(markowitzOnStartRunTimeout, args, form, request, testStocks, testGroups), data)
 endfunction
 unittestRunTest('testMarkowitzOnStartRun_timeoutBinding')
 
 
 async function testMarkowitzOnStartRunTimeout():
+    # The run is created - its portfolios' progress is rendered
     unittestMockAll({'systemFetch': {'createRun': '{"id": "r2"}'}})
     markowitzOnStartRunTimeout({'page': 'new'}, testForm, testRequest, testStocks, testGroups)
-    unittestDeepEqual(unittestMockEnd(), [ \
-        ['systemFetch', [{'url': 'createRun', 'body': jsonStringify(testRequest)}]], \
-        ['windowSetLocation', ["#var.vId='r2'&var.vPage='run'"]] \
-    ])
+    expected = [['systemFetch', [{'url': 'createRun', 'body': jsonStringify(testRequest)}]]]
+    arrayExtend(expected, testRunProgressCalls('My Run', 0, 2, '0'))
+    unittestDeepEqual(unittestMockEnd(), expected)
 endfunction
 unittestRunTest('testMarkowitzOnStartRunTimeout')
+
+
+#
+# Run progress tests
+#
+
+
+function testMarkowitzRunProgress():
+    unittestMockAll()
+    markowitzRunProgress(testRunProgress(1))
+    expected = testHeaderCalls('Blue <Chips>', 'Blue \\<Chips\\>')
+    arrayExtend(expected, arraySlice(testRunProgressCalls('Blue <Chips>', 1, 3, '33'), 2))
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzRunProgress')
+
+
+async function testMarkowitzRunProgress_timeoutBinding():
+    data = {'systemFetch': {'computeRunPortfolio': jsonStringify({'portfolios': 2, 'targets': 3})}}
+    callbacks = testCaptureTimeouts(systemPartial(markowitzRunProgress, testRunProgress(1)), data)
+    testSameEffect(arrayGet(callbacks, 0), systemPartial(markowitzOnRunPortfolio, testRunProgress(1)), data)
+endfunction
+unittestRunTest('testMarkowitzRunProgress_timeoutBinding')
+
+
+async function testMarkowitzRunProgress_stopBinding():
+    unittestMockAll()
+    markowitzRunProgress(testRunProgress(1))
+    found = testFindClick(unittestMockEnd(), 'Stop')
+    testSameEffect(found, systemPartial(markowitzOnRunStop, testRunProgress(1)), {})
+endfunction
+unittestRunTest('testMarkowitzRunProgress_stopBinding')
+
+
+async function testMarkowitzOnRunPortfolio():
+    # A portfolio is computed - the progress is rendered, and the next portfolio is scheduled
+    progress = testRunProgress(1)
+    unittestMockAll({'systemFetch': {'computeRunPortfolio': jsonStringify({'portfolios': 2, 'targets': 3})}})
+    markowitzOnRunPortfolio(progress)
+    expected = [['systemFetch', [{'url': 'computeRunPortfolio', 'body': '{"id":"r1"}'}]]]
+    arrayExtend(expected, testHeaderCalls('Blue <Chips>', 'Blue \\<Chips\\>'))
+    arrayExtend(expected, arraySlice(testRunProgressCalls('Blue <Chips>', 2, 3, '67'), 2))
+    unittestDeepEqual(unittestMockEnd(), expected)
+    unittestEqual(objectGet(progress, 'count'), 2)
+endfunction
+unittestRunTest('testMarkowitzOnRunPortfolio')
+
+
+async function testMarkowitzOnRunPortfolio_done():
+    # The last portfolio is computed - the run's page is opened
+    unittestMockAll({'systemFetch': {'computeRunPortfolio': jsonStringify({'portfolios': 3, 'targets': 3})}})
+    markowitzOnRunPortfolio(testRunProgress(2))
+    unittestDeepEqual(unittestMockEnd(), [ \
+        ['systemFetch', [{'url': 'computeRunPortfolio', 'body': '{"id":"r1"}'}]], \
+        ['windowSetLocation', ["#var.vId='r1'&var.vPage='run'"]] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzOnRunPortfolio_done')
+
+
+async function testMarkowitzOnRunPortfolio_error():
+    # Continued from the run's page - the run's page is rendered with the message
+    args = {'page': 'run', 'id': 'r1'}
+    data = {'systemFetch': {'getRun?id=r1': jsonStringify({'run': testRun})}}
+    unittestMockAll(data)
+    markowitzOnRunPortfolio(testRunProgress(2, args))
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['systemFetch', [{'url': 'computeRunPortfolio', 'body': '{"id":"r1"}'}]])
+    message = 'Computing the run\'s portfolio failed.'
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(systemPartial(markowitzRunPage, args, message), data))
+endfunction
+unittestRunTest('testMarkowitzOnRunPortfolio_error')
+
+
+async function testMarkowitzOnRunStop():
+    unittestMockAll()
+    markowitzOnRunStop(testRunProgress(1))
+    unittestDeepEqual(unittestMockEnd(), [['windowSetLocation', ["#var.vId='r1'&var.vPage='run'"]]])
+endfunction
+unittestRunTest('testMarkowitzOnRunStop')
 
 
 async function testMarkowitzOnStartRunTimeout_error():
@@ -1594,11 +1751,7 @@ unittestRunTest('testMarkowitzUpdateProgress')
 async function testMarkowitzUpdateProgress_timeoutBinding():
     # The progress page's timeout downloads the next chunk
     data = testStocksPageData([{'symbol': 'S0', 'stock': arrayGet(testStocks, 0)}])
-    callbacks = []
-    unittestMockAll(data)
-    unittestMockOne('windowSetTimeout', systemPartial(testCaptureTimeout, callbacks))
-    markowitzUpdateProgress(testUpdate(testUpdateSymbols))
-    unittestMockEnd()
+    callbacks = testCaptureTimeouts(systemPartial(markowitzUpdateProgress, testUpdate(testUpdateSymbols)), data)
     testSameEffect(arrayGet(callbacks, 0), systemPartial(markowitzOnUpdateChunk, testUpdate(testUpdateSymbols)), data)
 endfunction
 unittestRunTest('testMarkowitzUpdateProgress_timeoutBinding')
