@@ -1,0 +1,115 @@
+include <unittest.bare>
+include '../../backend/markowitzAnalysis.bare'
+include 'testMarkowitzHelpers.bare'
+
+
+function testMarkowitzRelatives():
+    prices = {'2023-01': 100, '2023-02': 110, '2023-03': 99, '2023-05': 120}
+    unittestDeepEqual(markowitzRelatives(prices, markowitzMonthIndex('2023-01'), 2), [1.1, 0.9])
+    unittestDeepEqual(markowitzRelatives(prices, markowitzMonthIndex('2023-03'), 0), [])
+    unittestEqual(markowitzRelatives(prices, markowitzMonthIndex('2023-01'), 4), null)
+    unittestEqual(markowitzRelatives(prices, markowitzMonthIndex('2022-12'), 2), null)
+endfunction
+unittestRunTest('testMarkowitzRelatives')
+
+
+# Compute a run's stock statistics and each target return's portfolio
+function testAnalyze(symbols, relatives, horizonRelatives, horizon, targets):
+    analysis = markowitzAnalyzeStocks(symbols, relatives, horizonRelatives, horizon)
+    portfolios = []
+    for target in targets:
+        arrayPush(portfolios, markowitzPortfolio( \
+            symbols, objectGet(analysis, 'covariance'), objectGet(analysis, 'expected'), objectGet(analysis, 'growths'), horizon, target \
+        ))
+    endfor
+    return {'stocks': objectGet(analysis, 'stocks'), 'portfolios': portfolios}
+endfunction
+
+
+function testMarkowitzAnalyze():
+    # The stocks' statistics and portfolios match the original program's
+    unittestDeepEqual( \
+        testRound(testAnalyze(testSymbols, testAnalysisRelatives, testHorizonRelatives, 3, testTargets)), \
+        testRound({'stocks': testRunStocks, 'portfolios': testRunPortfolios}) \
+    )
+endfunction
+unittestRunTest('testMarkowitzAnalyze')
+
+
+function testMarkowitzAnalyze_noHorizon():
+    analysis = testAnalyze(['A', 'B', 'C'], arraySlice(testAnalysisRelatives, 0, 3), [[1.1], null, [1.0]], 1, [10])
+    stocks = objectGet(analysis, 'stocks')
+    unittestEqual(objectHas(arrayGet(stocks, 0), 'realizedReturn'), true)
+    unittestEqual(objectHas(arrayGet(stocks, 1), 'realizedReturn'), false)
+    portfolio = arrayGet(objectGet(analysis, 'portfolios'), 0)
+    unittestEqual(objectGet(portfolio, 'solved'), true)
+    unittestEqual(objectHas(portfolio, 'realizedReturn'), false)
+endfunction
+unittestRunTest('testMarkowitzAnalyze_noHorizon')
+
+
+function testMarkowitzPortfolio_singular():
+    # Two identical stocks - the system is singular, with no stock deleted
+    unittestDeepEqual( \
+        markowitzPortfolio(['A', 'B'], [[4, 4], [4, 4]], [1, 1], [null, null], 3, 10), \
+        {'target': 10, 'solved': false, 'allocations': [], 'deleted': [], 'deletedWeights': []} \
+    )
+endfunction
+unittestRunTest('testMarkowitzPortfolio_singular')
+
+
+function testMarkowitzAnnualReturn():
+    unittestEqual(markowitzAnnualReturn(1, 12), 0)
+    unittestEqual(mathRound(markowitzAnnualReturn(1.01, 12) * 1e6) / 1e6, 12.682503)
+    unittestEqual(mathRound(markowitzAnnualReturn(1.1, 4) * 1e6) / 1e6, 46.41)
+endfunction
+unittestRunTest('testMarkowitzAnnualReturn')
+
+
+function testMarkowitzInvert():
+    # The second row pivots - [[2, 1], [1, 3]]'s inverse is [[3, -1], [-1, 2]] / 5
+    unittestDeepEqual(testRound(markowitzInvert([[2, 1], [1, 3]])), [[0.6, -0.2], [-0.2, 0.4]])
+
+    # The first column's pivot is in the last row - a row interchange, undone as a column interchange
+    unittestDeepEqual(testRound(markowitzInvert([[0, 1], [1, 0]])), [[0, 1], [1, 0]])
+    unittestDeepEqual(testRound(markowitzInvert([[0, 2, 0], [1, 0, 0], [0, 0, 4]])), [[0, 1, 0], [0.5, 0, 0], [0, 0, 0.25]])
+endfunction
+unittestRunTest('testMarkowitzInvert')
+
+
+function testMarkowitzInvert_singular():
+    unittestEqual(markowitzInvert([[1, 2], [2, 4]]), null)
+endfunction
+unittestRunTest('testMarkowitzInvert_singular')
+
+
+function testMarkowitzInverseDelete():
+    # Deleting index 1 of [[4, 1, 2], [1, 3, 0], [2, 0, 5]] leaves the inverse of [[4, 2], [2, 5]] - [[5, -2], [-2, 4]] / 16
+    inverse = markowitzInvert([[4, 1, 2], [1, 3, 0], [2, 0, 5]])
+    unittestEqual(markowitzInverseDelete(inverse, [0, 2], 1), true)
+    unittestDeepEqual( \
+        testRound([[arrayGet(arrayGet(inverse, 0), 0), arrayGet(arrayGet(inverse, 0), 2)], [arrayGet(arrayGet(inverse, 2), 0), arrayGet(arrayGet(inverse, 2), 2)]]), \
+        [[0.3125, -0.125], [-0.125, 0.25]] \
+    )
+endfunction
+unittestRunTest('testMarkowitzInverseDelete')
+
+
+function testMarkowitzInverseDelete_singular():
+    # Without index 0, [[1, 1], [1, 0]] leaves [[0]] - singular
+    inverse = markowitzInvert([[1, 1], [1, 0]])
+    unittestEqual(markowitzInverseDelete(inverse, [1], 0), false)
+endfunction
+unittestRunTest('testMarkowitzInverseDelete_singular')
+
+
+function testMarkowitzSystem():
+    covariance = [[4, 1, 2], [1, 9, 3], [2, 3, 16]]
+    unittestDeepEqual(markowitzSystem(covariance, [1, 2, 3], [0, 2]), [ \
+        [4, 2, 1, 1], \
+        [2, 16, 3, 1], \
+        [1, 3, 0, 0], \
+        [1, 1, 0, 0] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzSystem')

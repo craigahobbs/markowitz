@@ -3,7 +3,7 @@
 include <url.bare>
 
 # The backend - its database helpers and actions
-include 'markowitz.bare'
+include '../backend/markowitz.bare'
 
 
 # The CouchDB server URL - the database URL's parent

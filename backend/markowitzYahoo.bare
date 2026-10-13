@@ -1,0 +1,90 @@
+# The Yahoo Finance stock price download
+
+include <url.bare>
+
+# The month helpers - shared with the frontend
+include '../frontend/markowitzUtil.bare'
+
+
+# The stock price download URL - Yahoo Finance's chart API. Its "range=max" downsamples long histories, so request
+# every month since 1900 explicitly. It rejects requests without a user agent.
+markowitzYahooURL = 'https://query1.finance.yahoo.com/v8/finance/chart/'
+markowitzYahooQuery = '?period1=-2208988800&period2=9999999999&interval=1mo'
+markowitzYahooHeaders = {'User-Agent': 'Mozilla/5.0 (compatible; Markowitz)'}
+
+# Half a day, in seconds
+markowitzHalfDaySeconds = 43200
+
+
+# Download stocks' monthly prices - returns the array of each stock's document fields (null if its download failed)
+async function markowitzYahooDownload(symbols):
+    requests = []
+    for symbol in symbols:
+        url = markowitzYahooURL + urlEncodeComponent(symbol) + markowitzYahooQuery
+        arrayPush(requests, {'url': url, 'headers': markowitzYahooHeaders})
+    endfor
+    stocks = []
+    for responseText in systemFetch(requests):
+        arrayPush(stocks, markowitzParseYahoo(responseText))
+    endfor
+    return stocks
+endfunction
+
+
+# Get the month string of a POSIX timestamp, in seconds - computed from the days since the epoch (Howard Hinnant's
+# "civil_from_days" algorithm), since BareScript datetimes are local time
+function markowitzTimestampMonth(timestamp):
+    days = mathFloor(timestamp / 86400) + 719468
+    era = mathFloor(days / 146097)
+    dayOfEra = days - era * 146097
+    yearOfEra = mathFloor((dayOfEra - mathFloor(dayOfEra / 1460) + mathFloor(dayOfEra / 36524) - mathFloor(dayOfEra / 146096)) / 365)
+    dayOfYear = dayOfEra - (365 * yearOfEra + mathFloor(yearOfEra / 4) - mathFloor(yearOfEra / 100))
+    monthPrime = mathFloor((5 * dayOfYear + 2) / 153)
+    monthNumber = if(monthPrime < 10, monthPrime + 3, monthPrime - 9)
+    year = yearOfEra + era * 400 + if(monthNumber <= 2, 1, 0)
+    return markowitzMonthString(year * 12 + monthNumber - 1)
+endfunction
+
+
+# Parse a Yahoo Finance chart API monthly response - returns the stock document fields, or null on failure. The month
+# of the latest trade is incomplete, so it's excluded (and so are any later months).
+function markowitzParseYahoo(responseText):
+    response = if(responseText != null, jsonParse(responseText))
+    chart = if(response != null, objectGet(response, 'chart'))
+    chartResults = if(chart != null, objectGet(chart, 'result'))
+    if !chartResults:
+        return null
+    endif
+    chartResult = arrayGet(chartResults, 0)
+    meta = objectGet(chartResult, 'meta', {})
+    offset = objectGet(meta, 'gmtoffset', 0)
+    currentMonth = markowitzTimestampMonth(objectGet(meta, 'regularMarketTime', 0) + offset)
+
+    # Map each month to its last price. A month's price is at the exchange's local midnight on the month's first day,
+    # but the offset is the latest trade's - in or out of daylight saving time - so round to the nearest local day. The
+    # latest trade's price is at its time, which rounds into its month, or the next.
+    timestamps = objectGet(chartResult, 'timestamp', [])
+    adjcloses = objectGet(objectGet(chartResult, 'indicators', {}), 'adjclose')
+    closes = if(adjcloses, objectGet(arrayGet(adjcloses, 0), 'adjclose'), [])
+    prices = {}
+    for timestamp, ixTimestamp in timestamps:
+        month = markowitzTimestampMonth(timestamp + offset + markowitzHalfDaySeconds)
+        close = if(ixTimestamp < arrayLength(closes), arrayGet(closes, ixTimestamp))
+        if month < currentMonth && close != null && close > 0:
+            objectSet(prices, month, close)
+        endif
+    endfor
+    months = arraySort(objectKeys(prices))
+    if !months:
+        return null
+    endif
+
+    return { \
+        'name': objectGet(meta, 'longName') || objectGet(meta, 'shortName'), \
+        'currency': objectGet(meta, 'currency'), \
+        'firstMonth': arrayGet(months, 0), \
+        'lastMonth': arrayGet(months, arrayLength(months) - 1), \
+        'monthCount': arrayLength(months), \
+        'prices': prices \
+    }
+endfunction

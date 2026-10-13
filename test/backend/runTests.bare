@@ -7,6 +7,9 @@ unittestCoverageStart()
 
 # Test includes
 include 'testMarkowitz.bare'
+include 'testMarkowitzAnalysis.bare'
+include 'testMarkowitzCouch.bare'
+include 'testMarkowitzYahoo.bare'
 include 'testMarkowitzAdmin.bare'
 
 # Stop coverage

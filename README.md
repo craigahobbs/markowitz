@@ -61,7 +61,7 @@ make init
 `make init` adds the admin (if CouchDB has none), creates the database, saves the built-in stock groups, and downloads
 their stocks' prices - about 500 stocks, in a minute or two. Running it again updates the groups and the prices.
 
-The built-in stock groups are in [backend/markowitzGroups.json](backend/markowitzGroups.json) - edit it to update an
+The built-in stock groups are in [admin/markowitzGroups.json](admin/markowitzGroups.json) - edit it to update an
 index's members (Yahoo Finance symbols, e.g. "BRK-B"):
 
 | Group | Stocks |
@@ -116,9 +116,12 @@ The project layout:
 
 | Path | Description |
 | --- | --- |
-| `backend/markowitz.bare` | The backend - the API's action functions, the analysis, and the WSGI application |
-| `backend/markowitzAdmin.bare` | The database administration commands - `python3 wsgi.py check\|init\|reset` |
-| `backend/markowitzGroups.json` | The built-in stock groups |
+| `backend/markowitz.bare` | The backend - the API's action functions and the WSGI application |
+| `backend/markowitzAnalysis.bare` | The Markowitz portfolio analysis - a port of the original program |
+| `backend/markowitzCouch.bare` | The CouchDB database helpers |
+| `backend/markowitzYahoo.bare` | The Yahoo Finance stock price download |
+| `admin/markowitzAdmin.bare` | The database administration commands - `python3 wsgi.py check\|init\|reset` |
+| `admin/markowitzGroups.json` | The built-in stock groups |
 | `frontend/markowitz.bare` | The MarkdownUp frontend application |
 | `frontend/markowitzTypes.bare` | The API's [Schema Markdown](https://craigahobbs.github.io/schema-markdown-js/language/) types, shared by the backend and frontend |
 | `frontend/markowitzUtil.bare` | The month, symbol, and run stock selection helpers, shared by the backend and frontend |

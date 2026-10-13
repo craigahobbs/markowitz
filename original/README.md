@@ -1,7 +1,7 @@
 # The Original Program
 
 Program HOBBS, a Fortran 2.1 program written in 1967 to test the Markowitz method of portfolio selection, is the
-original of Markowitz's analysis ([backend/markowitz.bare](../backend/markowitz.bare)'s `markowitzAnalyze`). The
+original of Markowitz's analysis ([backend/markowitzAnalysis.bare](../backend/markowitzAnalysis.bare)). The
 program's three pages, and the 2009 email from its author that sent them, follow.
 
 

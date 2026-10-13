@@ -49,7 +49,7 @@ def main():
     The database administration command-line interface main entry point
     """
 
-    script = barescript_parse_script("include 'backend/markowitzAdmin.bare'\nreturn markowitzAdmin(markowitzAdminArgs)")
+    script = barescript_parse_script("include 'admin/markowitzAdmin.bare'\nreturn markowitzAdmin(markowitzAdminArgs)")
     status = execute_script(script, {
         'fetchFn': fetch_read_only,
         'globals': {'markowitzAdminArgs': sys.argv[1:], **COUCH_GLOBALS},

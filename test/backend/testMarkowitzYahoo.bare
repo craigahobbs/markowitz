@@ -1,0 +1,58 @@
+include <unittest.bare>
+include '../../backend/markowitzYahoo.bare'
+include 'testMarkowitzHelpers.bare'
+
+
+function testMarkowitzTimestampMonth():
+    unittestEqual(markowitzTimestampMonth(0), '1970-01')
+    unittestEqual(markowitzTimestampMonth(-1), '1969-12')
+    unittestEqual(markowitzTimestampMonth(-2208988800), '1900-01')
+    unittestEqual(markowitzTimestampMonth(-73526400), '1967-09')
+    unittestEqual(markowitzTimestampMonth(951782399), '2000-02')
+    unittestEqual(markowitzTimestampMonth(951868799), '2000-02')
+    unittestEqual(markowitzTimestampMonth(951868800), '2000-03')
+    unittestEqual(markowitzTimestampMonth(1790827200 - 14400), '2026-10')
+    unittestEqual(markowitzTimestampMonth(1790827200 - 14401), '2026-09')
+endfunction
+unittestRunTest('testMarkowitzTimestampMonth')
+
+
+function testMarkowitzParseYahoo():
+    unittestDeepEqual(markowitzParseYahoo(testYahooResponse({'longName': 'Test Corporation', 'currency': 'USD'})), { \
+        'name': 'Test Corporation', \
+        'currency': 'USD', \
+        'firstMonth': '2026-07', \
+        'lastMonth': '2026-09', \
+        'monthCount': 3, \
+        'prices': {'2026-07': 9, '2026-08': 10, '2026-09': 12} \
+    })
+endfunction
+unittestRunTest('testMarkowitzParseYahoo')
+
+
+function testMarkowitzParseYahoo_daylightSaving():
+    # Downloaded out of daylight saving time (EST) - the months' prices in daylight saving time (EDT) are at 04:00 UTC,
+    # 23:00 EST of the month's prior day. The latest trade is the evening of 2026-11-30.
+    response = jsonStringify({'chart': {'result': [{ \
+        'meta': {'gmtoffset': -18000, 'regularMarketTime': 1796090400}, \
+        'timestamp': [1772341200, 1775016000, 1777608000, 1780286400, 1796090400], \
+        'indicators': {'adjclose': [{'adjclose': [3, 4, 5, 6, 7]}]} \
+    }]}})
+    unittestDeepEqual(objectGet(markowitzParseYahoo(response), 'prices'), {'2026-03': 3, '2026-04': 4, '2026-05': 5, '2026-06': 6})
+endfunction
+unittestRunTest('testMarkowitzParseYahoo_daylightSaving')
+
+
+function testMarkowitzParseYahoo_failure():
+    unittestEqual(markowitzParseYahoo(null), null)
+    unittestEqual(markowitzParseYahoo('{}'), null)
+    unittestEqual(markowitzParseYahoo('{"chart": {"result": null, "error": {"code": "Not Found"}}}'), null)
+    unittestEqual(markowitzParseYahoo('{"chart": {"result": []}}'), null)
+
+    # No adjusted prices
+    unittestEqual(markowitzParseYahoo('{"chart": {"result": [{"timestamp": [0], "indicators": {}}]}}'), null)
+
+    # Only the current month
+    unittestEqual(markowitzParseYahoo('{"chart": {"result": [{"timestamp": [0], "indicators": {"adjclose": [{"adjclose": [1]}]}}]}}'), null)
+endfunction
+unittestRunTest('testMarkowitzParseYahoo_failure')

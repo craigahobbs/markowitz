@@ -1,0 +1,23 @@
+include <unittest.bare>
+
+
+# The database credentials the host passes to the backend
+markowitzCouchCredentials = 'admin:secret'
+
+
+include '../../backend/markowitzCouch.bare'
+include 'testMarkowitzHelpers.bare'
+
+
+function testMarkowitzCouchHeaders():
+    unittestEqual(markowitzCouchURL, testCouchURL)
+    unittestDeepEqual(markowitzCouchHeaders, testCouchHeaders)
+endfunction
+unittestRunTest('testMarkowitzCouchHeaders')
+
+
+function testMarkowitzTrimURL():
+    unittestEqual(markowitzTrimURL('http://127.0.0.1:5984/markowitz'), 'http://127.0.0.1:5984/markowitz')
+    unittestEqual(markowitzTrimURL('http://127.0.0.1:5984/markowitz//'), 'http://127.0.0.1:5984/markowitz')
+endfunction
+unittestRunTest('testMarkowitzTrimURL')

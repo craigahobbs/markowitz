@@ -1,44 +1,20 @@
-include <base64.bare>
-include <url.bare>
 include <wsgi.bare>
 
 # The API types and utilities - shared with the frontend
 include '../frontend/markowitzTypes.bare'
 include '../frontend/markowitzUtil.bare'
 
+# The portfolio analysis, the CouchDB database helpers, and the Yahoo Finance stock price download
+include 'markowitzAnalysis.bare'
+include 'markowitzCouch.bare'
+include 'markowitzYahoo.bare'
 
-# Remove a URL's trailing slashes
-function markowitzTrimURL(url):
-    return regexReplace(markowitzRegexTrailingSlashes, url, '')
-endfunction
-
-markowitzRegexTrailingSlashes = regexNew('/+$')
-
-
-# The CouchDB database URL and request headers - the host passes the URL and credentials ("user:password") as globals
-markowitzCouchURL = markowitzTrimURL(systemGlobalGet('markowitzCouchURL', 'http://127.0.0.1:5984/markowitz'))
-markowitzCouchHeaders = { \
-    'Content-Type': 'application/json', \
-    'Authorization': 'Basic ' + base64Encode(stringEncode(systemGlobalGet('markowitzCouchCredentials', ''))) \
-}
-
-# The stock price download URL - Yahoo Finance's chart API. Its "range=max" downsamples long histories, so request
-# every month since 1900 explicitly. It rejects requests without a user agent.
-markowitzYahooURL = 'https://query1.finance.yahoo.com/v8/finance/chart/'
-markowitzYahooQuery = '?period1=-2208988800&period2=9999999999&interval=1mo'
-markowitzYahooHeaders = {'User-Agent': 'Mozilla/5.0 (compatible; Markowitz)'}
 
 # The stock summary fields
 markowitzStockInfoFields = ['symbol', 'name', 'currency', 'firstMonth', 'lastMonth', 'monthCount', 'updated']
 
 # The run summary fields
 markowitzRunInfoFields = ['_id', 'name', 'created', 'symbols', 'group', 'endMonth', 'months', 'horizon', 'targets', 'running']
-
-# Half a day, in seconds
-markowitzHalfDaySeconds = 43200
-
-# The magnitude below which a pivot is zero - the matrix is singular
-markowitzSingularEpsilon = 1e-9
 
 
 #
@@ -73,16 +49,13 @@ async function updateStocks(request):
     symbols = markowitzSymbols(objectGet(request, 'symbols'))
 
     # Download the stocks' monthly prices
-    downloadRequests = []
-    ids = []
-    for symbol in symbols:
-        url = markowitzYahooURL + urlEncodeComponent(symbol) + markowitzYahooQuery
-        arrayPush(downloadRequests, {'url': url, 'headers': markowitzYahooHeaders})
-        arrayPush(ids, markowitzStockID(symbol))
-    endfor
-    downloads = systemFetch(downloadRequests)
+    downloads = markowitzYahooDownload(symbols)
 
     # Get the existing stock documents' revisions
+    ids = []
+    for symbol in symbols:
+        arrayPush(ids, markowitzStockID(symbol))
+    endfor
     revs = markowitzDBRevs(ids)
     if revs == null:
         return markowitzDatabaseError()
@@ -96,7 +69,7 @@ async function updateStocks(request):
     for symbol, ixSymbol in symbols:
         result = {'symbol': symbol}
         arrayPush(results, result)
-        stock = markowitzParseYahoo(arrayGet(downloads, ixSymbol))
+        stock = arrayGet(downloads, ixSymbol)
         if stock == null:
             objectSet(result, 'error', 'Download failed - is "' + symbol + '" a Yahoo Finance symbol?')
             continue
@@ -432,405 +405,9 @@ function markowitzCompareCreatedDescending(a, b):
 endfunction
 
 
-#
-# Stock prices
-#
-
-
-# Get the month string of a POSIX timestamp, in seconds - computed from the days since the epoch (Howard Hinnant's
-# "civil_from_days" algorithm), since BareScript datetimes are local time
-function markowitzTimestampMonth(timestamp):
-    days = mathFloor(timestamp / 86400) + 719468
-    era = mathFloor(days / 146097)
-    dayOfEra = days - era * 146097
-    yearOfEra = mathFloor((dayOfEra - mathFloor(dayOfEra / 1460) + mathFloor(dayOfEra / 36524) - mathFloor(dayOfEra / 146096)) / 365)
-    dayOfYear = dayOfEra - (365 * yearOfEra + mathFloor(yearOfEra / 4) - mathFloor(yearOfEra / 100))
-    monthPrime = mathFloor((5 * dayOfYear + 2) / 153)
-    monthNumber = if(monthPrime < 10, monthPrime + 3, monthPrime - 9)
-    year = yearOfEra + era * 400 + if(monthNumber <= 2, 1, 0)
-    return markowitzMonthString(year * 12 + monthNumber - 1)
-endfunction
-
-
-# Parse a Yahoo Finance chart API monthly response - returns the stock document fields, or null on failure. The month
-# of the latest trade is incomplete, so it's excluded (and so are any later months).
-function markowitzParseYahoo(responseText):
-    response = if(responseText != null, jsonParse(responseText))
-    chart = if(response != null, objectGet(response, 'chart'))
-    chartResults = if(chart != null, objectGet(chart, 'result'))
-    if !chartResults:
-        return null
-    endif
-    chartResult = arrayGet(chartResults, 0)
-    meta = objectGet(chartResult, 'meta', {})
-    offset = objectGet(meta, 'gmtoffset', 0)
-    currentMonth = markowitzTimestampMonth(objectGet(meta, 'regularMarketTime', 0) + offset)
-
-    # Map each month to its last price. A month's price is at the exchange's local midnight on the month's first day,
-    # but the offset is the latest trade's - in or out of daylight saving time - so round to the nearest local day. The
-    # latest trade's price is at its time, which rounds into its month, or the next.
-    timestamps = objectGet(chartResult, 'timestamp', [])
-    adjcloses = objectGet(objectGet(chartResult, 'indicators', {}), 'adjclose')
-    closes = if(adjcloses, objectGet(arrayGet(adjcloses, 0), 'adjclose'), [])
-    prices = {}
-    for timestamp, ixTimestamp in timestamps:
-        month = markowitzTimestampMonth(timestamp + offset + markowitzHalfDaySeconds)
-        close = if(ixTimestamp < arrayLength(closes), arrayGet(closes, ixTimestamp))
-        if month < currentMonth && close != null && close > 0:
-            objectSet(prices, month, close)
-        endif
-    endfor
-    months = arraySort(objectKeys(prices))
-    if !months:
-        return null
-    endif
-
-    return { \
-        'name': objectGet(meta, 'longName') || objectGet(meta, 'shortName'), \
-        'currency': objectGet(meta, 'currency'), \
-        'firstMonth': arrayGet(months, 0), \
-        'lastMonth': arrayGet(months, arrayLength(months) - 1), \
-        'monthCount': arrayLength(months), \
-        'prices': prices \
-    }
-endfunction
-
-
-# Get the first month, from a start month to an end month, without a price - null if every month has a price
-function markowitzMissingMonth(prices, startIndex, endIndex):
-    monthIndex = startIndex
-    while monthIndex <= endIndex:
-        month = markowitzMonthString(monthIndex)
-        if !objectHas(prices, month):
-            return month
-        endif
-        monthIndex = monthIndex + 1
-    endwhile
-    return null
-endfunction
-
-
-# Compute a stock's monthly price relatives (the ratio of a month's price to the prior month's) for the months
-# following a month - null if a month has no price
-function markowitzRelatives(prices, startIndex, count):
-    relatives = []
-    pricePrior = objectGet(prices, markowitzMonthString(startIndex))
-    monthIndex = startIndex + 1
-    while monthIndex <= startIndex + count:
-        price = objectGet(prices, markowitzMonthString(monthIndex))
-        if pricePrior == null || price == null:
-            return null
-        endif
-        arrayPush(relatives, price / pricePrior)
-        pricePrior = price
-        monthIndex = monthIndex + 1
-    endwhile
-    return relatives
-endfunction
-
 
 #
-# The Markowitz portfolio analysis - a port of Program HOBBS, Fortran 2.1, 09/13/67
-#
-
-
-# Compute a run's stock statistics, and the stocks' covariance, projected monthly returns, and growths over the
-# projection (null if its months haven't passed) - each target return's portfolio is computed from them. Each stock's
-# monthly percent returns are regressed on time - the projected return is the trend's return at the end of the
-# projection, and the risk is the variance (and covariance) of the returns about their trend.
-function markowitzAnalyzeStocks(symbols, relatives, horizonRelatives, horizon):
-    monthCount = arrayLength(arrayGet(relatives, 0))
-    xBar = (monthCount + 1) / 2
-    sumX2 = 0
-    month = 1
-    while month <= monthCount:
-        sumX2 = sumX2 + (month - xBar) ** 2
-        month = month + 1
-    endwhile
-
-    # Regress each stock's monthly percent returns on time
-    stocks = []
-    expected = []
-    growths = []
-    residuals = []
-    for stockRelatives, ixStock in relatives:
-        returns = []
-        yBar = 0
-        sumXY = 0
-        for relative, ixMonth in stockRelatives:
-            percent = (relative - 1) * 100
-            arrayPush(returns, percent)
-            yBar = yBar + percent
-            sumXY = sumXY + (ixMonth + 1 - xBar) * percent
-        endfor
-        yBar = yBar / monthCount
-        slope = sumXY / sumX2
-        intercept = yBar - slope * xBar
-        projected = yBar + slope * (monthCount + horizon - xBar)
-
-        # The residuals about the trend
-        stockResiduals = []
-        variance = 0
-        for percent, ixMonth in returns:
-            residual = percent - intercept - slope * (ixMonth + 1)
-            arrayPush(stockResiduals, residual)
-            variance = variance + residual * residual
-        endfor
-
-        # The growth over the projection, if its months have passed
-        growth = null
-        stockHorizonRelatives = arrayGet(horizonRelatives, ixStock)
-        if stockHorizonRelatives != null:
-            growth = 1
-            for relative in stockHorizonRelatives:
-                growth = growth * relative
-            endfor
-        endif
-
-        stock = { \
-            'symbol': arrayGet(symbols, ixStock), \
-            'expectedReturn': markowitzAnnualReturn(1 + projected / 100, 12), \
-            'variance': variance / monthCount \
-        }
-        if growth != null:
-            objectSet(stock, 'realizedReturn', markowitzAnnualReturn(growth, 12 / horizon))
-        endif
-        arrayPush(stocks, stock)
-        arrayPush(expected, projected)
-        arrayPush(growths, growth)
-        arrayPush(residuals, stockResiduals)
-    endfor
-
-    # The covariance matrix of the residuals - it's symmetric, so each pair of stocks is computed once
-    covariance = []
-    for residualsI, ixStockI in residuals:
-        row = []
-        for residualsJ, ixStockJ in residuals:
-            if ixStockJ < ixStockI:
-                arrayPush(row, arrayGet(arrayGet(covariance, ixStockJ), ixStockI))
-                continue
-            endif
-            sum = 0
-            for residual, ixMonth in residualsI:
-                sum = sum + residual * arrayGet(residualsJ, ixMonth)
-            endfor
-            arrayPush(row, sum / monthCount)
-        endfor
-        arrayPush(covariance, row)
-    endfor
-
-    return {'stocks': stocks, 'covariance': covariance, 'expected': expected, 'growths': growths}
-endfunction
-
-
-# Annualize a growth ratio - returns the annual percent return
-function markowitzAnnualReturn(growth, periodsPerYear):
-    return (growth ** periodsPerYear - 1) * 100
-endfunction
-
-
-# Compute a target annual return's minimum-variance portfolio. The weights that minimize the variance, with the target
-# return and weights that sum to one, solve the Lagrangian's linear system - the covariance matrix bordered by the
-# expected returns and ones, with the right-hand side zeros, the target return, and one. If a weight is negative, delete
-# its stock (the most negative) and solve again. The system's matrix is inverted once - the weights are its inverse's
-# last two columns, scaled by the target return and one - and a deleted stock's row and column are removed from the
-# inverse (an O(n^2) update, rather than an O(n^3) solve).
-function markowitzPortfolio(symbols, covariance, expected, growths, horizon, target):
-    targetMonthly = ((1 + target / 100) ** (1 / 12) - 1) * 100
-    stockCount = arrayLength(symbols)
-    stockIndexes = []
-    while arrayLength(stockIndexes) < stockCount:
-        arrayPush(stockIndexes, arrayLength(stockIndexes))
-    endwhile
-    deleted = []
-    deletedWeights = []
-    unsolved = {'target': target, 'solved': false, 'allocations': [], 'deleted': deleted, 'deletedWeights': deletedWeights}
-    inverse = markowitzInvert(markowitzSystem(covariance, expected, stockIndexes))
-    if inverse == null:
-        return unsolved
-    endif
-
-    # The inverse's rows and columns - the stocks not deleted, and the two constraints
-    active = arrayCopy(stockIndexes)
-    arrayPush(active, stockCount, stockCount + 1)
-    while true:
-        # The weights
-        weights = []
-        for stockIndex in stockIndexes:
-            inverseRow = arrayGet(inverse, stockIndex)
-            arrayPush(weights, targetMonthly * arrayGet(inverseRow, stockCount) + arrayGet(inverseRow, stockCount + 1))
-        endfor
-
-        # Find the most negative weight - if none, done
-        ixMinimum = null
-        weightMinimum = 0
-        for weight, ixIndex in weights:
-            if weight < weightMinimum:
-                weightMinimum = weight
-                ixMinimum = ixIndex
-            endif
-        endfor
-        if ixMinimum == null:
-            break
-        endif
-
-        # Delete the stock from the portfolio, and its row and column from the inverse
-        stockIndex = arrayGet(stockIndexes, ixMinimum)
-        arrayPush(deleted, arrayGet(symbols, stockIndex))
-        arrayPush(deletedWeights, weightMinimum)
-        arrayDelete(stockIndexes, ixMinimum)
-        arrayDelete(active, ixMinimum)
-        if !markowitzInverseDelete(inverse, active, stockIndex):
-            return unsolved
-        endif
-    endwhile
-
-    # The portfolio's allocations, variance, and realized return
-    allocations = []
-    variance = 0
-    growth = 0
-    for stockIndex, ixIndex in stockIndexes:
-        weight = arrayGet(weights, ixIndex)
-        arrayPush(allocations, {'symbol': arrayGet(symbols, stockIndex), 'weight': weight})
-        covarianceRow = arrayGet(covariance, stockIndex)
-        for stockIndexJ, ixIndexJ in stockIndexes:
-            variance = variance + weight * arrayGet(weights, ixIndexJ) * arrayGet(covarianceRow, stockIndexJ)
-        endfor
-        stockGrowth = arrayGet(growths, stockIndex)
-        growth = if(growth != null && stockGrowth != null, growth + weight * stockGrowth)
-    endfor
-    portfolio = { \
-        'target': target, \
-        'solved': true, \
-        'allocations': allocations, \
-        'deleted': deleted, \
-        'deletedWeights': deletedWeights, \
-        'variance': variance \
-    }
-    if growth != null:
-        objectSet(portfolio, 'realizedReturn', markowitzAnnualReturn(growth, 12 / horizon))
-    endif
-    return portfolio
-endfunction
-
-
-# Create the matrix of the portfolio's linear system - the covariance matrix bordered by the expected returns and ones
-function markowitzSystem(covariance, expected, stockIndexes):
-    matrix = []
-    expectedRow = []
-    onesRow = []
-    for stockIndex in stockIndexes:
-        covarianceRow = arrayGet(covariance, stockIndex)
-        row = []
-        for stockIndexJ in stockIndexes:
-            arrayPush(row, arrayGet(covarianceRow, stockIndexJ))
-        endfor
-        arrayPush(row, arrayGet(expected, stockIndex), 1)
-        arrayPush(matrix, row)
-        arrayPush(expectedRow, arrayGet(expected, stockIndex))
-        arrayPush(onesRow, 1)
-    endfor
-    arrayPush(expectedRow, 0, 0)
-    arrayPush(onesRow, 0, 0)
-    arrayPush(matrix, expectedRow, onesRow)
-    return matrix
-endfunction
-
-
-# Invert a matrix, in place, with Gauss-Jordan elimination and partial pivoting - returns the inverse, or null if the
-# matrix is singular ("D WAS ZERO, NO SOLUTION"). Each pivot column becomes the inverse's column, so the row
-# interchanges are undone as column interchanges, in reverse order (Numerical Recipes' "gaussj").
-function markowitzInvert(matrix):
-    size = arrayLength(matrix)
-    pivotIndexes = []
-    ixColumn = 0
-    while ixColumn < size:
-        # Find the pivot row - the first row with the column's largest magnitude
-        ixPivot = ixColumn
-        pivotMagnitude = mathAbs(arrayGet(arrayGet(matrix, ixColumn), ixColumn))
-        ixRow = ixColumn + 1
-        while ixRow < size:
-            magnitude = mathAbs(arrayGet(arrayGet(matrix, ixRow), ixColumn))
-            if magnitude > pivotMagnitude:
-                pivotMagnitude = magnitude
-                ixPivot = ixRow
-            endif
-            ixRow = ixRow + 1
-        endwhile
-        if pivotMagnitude < markowitzSingularEpsilon:
-            return null
-        endif
-        arrayPush(pivotIndexes, ixPivot)
-
-        # Swap the pivot row into place and normalize it
-        pivotRow = arrayGet(matrix, ixPivot)
-        arraySet(matrix, ixPivot, arrayGet(matrix, ixColumn))
-        arraySet(matrix, ixColumn, pivotRow)
-        pivotInverse = 1 / arrayGet(pivotRow, ixColumn)
-        arraySet(pivotRow, ixColumn, 1)
-        for value, ixValue in pivotRow:
-            arraySet(pivotRow, ixValue, value * pivotInverse)
-        endfor
-
-        # Eliminate the column from the other rows
-        for row, ixRow in matrix:
-            factor = arrayGet(row, ixColumn)
-            if ixRow != ixColumn && factor != 0:
-                arraySet(row, ixColumn, 0)
-                for pivotValue, ixValue in pivotRow:
-                    arraySet(row, ixValue, arrayGet(row, ixValue) - factor * pivotValue)
-                endfor
-            endif
-        endfor
-
-        ixColumn = ixColumn + 1
-    endwhile
-
-    # Undo the row interchanges as column interchanges, in reverse order
-    ixColumn = size - 1
-    while ixColumn >= 0:
-        ixPivot = arrayGet(pivotIndexes, ixColumn)
-        if ixPivot != ixColumn:
-            for row in matrix:
-                value = arrayGet(row, ixPivot)
-                arraySet(row, ixPivot, arrayGet(row, ixColumn))
-                arraySet(row, ixColumn, value)
-            endfor
-        endif
-        ixColumn = ixColumn - 1
-    endwhile
-    return matrix
-endfunction
-
-
-# Remove an index's row and column from a symmetric matrix's inverse, in place - the inverse's other active rows and
-# columns become the inverse of the matrix without the index's row and column. Returns false if that matrix is singular
-# - the index's diagonal value is zero, relative to its row.
-function markowitzInverseDelete(inverse, active, index):
-    indexRow = arrayGet(inverse, index)
-    diagonal = arrayGet(indexRow, index)
-    rowMagnitude = mathAbs(diagonal)
-    for ixValue in active:
-        rowMagnitude = mathMax(rowMagnitude, mathAbs(arrayGet(indexRow, ixValue)))
-    endfor
-    if mathAbs(diagonal) < markowitzSingularEpsilon * rowMagnitude:
-        return false
-    endif
-    for ixRow in active:
-        row = arrayGet(inverse, ixRow)
-        factor = arrayGet(row, index) / diagonal
-        if factor != 0:
-            for ixValue in active:
-                arraySet(row, ixValue, arrayGet(row, ixValue) - factor * arrayGet(indexRow, ixValue))
-            endfor
-        endif
-    endfor
-    return true
-endfunction
-
-
-#
-# CouchDB database helpers
+# Document helpers
 #
 
 
@@ -855,70 +432,6 @@ async function markowitzDeleteDoc(id, unknownError):
         return markowitzDatabaseError()
     endif
     return null
-endfunction
-
-
-# Get a document - null if it doesn't exist (or on failure)
-async function markowitzDBGet(id):
-    docJSON = systemFetch({'url': markowitzCouchURL + '/' + urlEncodeComponent(id), 'headers': markowitzCouchHeaders})
-    return if(docJSON != null, jsonParse(docJSON))
-endfunction
-
-
-# Create or update a document (an update has the current "_rev") - returns true on success
-async function markowitzDBPut(doc):
-    url = markowitzCouchURL + '/' + urlEncodeComponent(objectGet(doc, '_id'))
-    return systemFetch({'url': url, 'method': 'PUT', 'headers': markowitzCouchHeaders, 'body': jsonStringify(doc)}) != null
-endfunction
-
-
-# Create a document with a database-assigned ID - returns the ID, or null on failure
-async function markowitzDBPost(doc):
-    responseJSON = systemFetch({'url': markowitzCouchURL, 'headers': markowitzCouchHeaders, 'body': jsonStringify(doc)})
-    return if(responseJSON != null, objectGet(jsonParse(responseJSON), 'id'))
-endfunction
-
-
-# Create or update documents (an update has the current "_rev") - returns the array of per-document results
-# ({"ok": true} or {"error": "conflict"}), or null on failure
-async function markowitzDBBulkSave(docs):
-    url = markowitzCouchURL + '/_bulk_docs'
-    responseJSON = systemFetch({'url': url, 'headers': markowitzCouchHeaders, 'body': jsonStringify({'docs': docs})})
-    return if(responseJSON != null, jsonParse(responseJSON))
-endfunction
-
-
-# Delete a document - returns true on success
-async function markowitzDBDelete(id, rev):
-    url = markowitzCouchURL + '/' + urlEncodeComponent(id) + '?rev=' + urlEncodeComponent(rev)
-    return systemFetch({'url': url, 'method': 'DELETE', 'headers': markowitzCouchHeaders}) != null
-endfunction
-
-
-# Find documents with a Mango selector, returning only the fields - null on failure
-async function markowitzDBFind(selector, fields):
-    body = jsonStringify({'selector': selector, 'fields': fields, 'limit': 100000})
-    responseJSON = systemFetch({'url': markowitzCouchURL + '/_find', 'headers': markowitzCouchHeaders, 'body': body})
-    return if(responseJSON != null, objectGet(jsonParse(responseJSON), 'docs'))
-endfunction
-
-
-# Get the current revisions of the existing (not deleted) documents - returns the map of ID to revision, or null on
-# failure
-async function markowitzDBRevs(ids):
-    url = markowitzCouchURL + '/_all_docs'
-    responseJSON = systemFetch({'url': url, 'headers': markowitzCouchHeaders, 'body': jsonStringify({'keys': ids})})
-    if responseJSON == null:
-        return null
-    endif
-    revs = {}
-    for row in objectGet(jsonParse(responseJSON), 'rows'):
-        value = objectGet(row, 'value')
-        if value != null && !objectGet(value, 'deleted'):
-            objectSet(revs, objectGet(row, 'id'), objectGet(value, 'rev'))
-        endif
-    endfor
-    return revs
 endfunction
 
 

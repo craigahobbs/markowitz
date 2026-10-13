@@ -1,0 +1,125 @@
+include <unittest.bare>
+include '../../backend/markowitzAnalysis.bare'
+
+
+# The test database URL and headers
+testCouchURL = 'http://127.0.0.1:5984/markowitz'
+testCouchHeaders = {'Authorization': 'Basic YWRtaW46c2VjcmV0', 'Content-Type': 'application/json'}
+
+
+# Round a value's numbers, recursively, for comparison
+function testRound(value):
+    type = systemType(value)
+    if type == 'number':
+        return mathRound(value * 1e9) / 1e9
+    elif type == 'array':
+        rounded = []
+        for item in value:
+            arrayPush(rounded, testRound(item))
+        endfor
+        return rounded
+    elif type == 'object':
+        rounded = {}
+        for key in objectKeys(value):
+            objectSet(rounded, key, testRound(objectGet(value, key)))
+        endfor
+        return rounded
+    endif
+    return value
+endfunction
+
+
+# The test stocks' monthly price relatives, 2020-02 through 2023-04 - four decimal places, as on the original program's
+# input cards
+testRelatives = [ \
+    [ \
+        1.0456, 1.0558, 0.8784, 1.0058, 1.0436, 0.9283, 0.9976, 0.9836, 1.0556, 0.9823, 0.9901, 0.9986, 0.9762, \
+        1.0999, 1.025, 1.0249, 0.9888, 1.0512, 0.9525, 1.0132, 1.0112, 1.0127, 0.9835, 1.0432, 0.9478, 0.9945, \
+        0.9984, 0.9573, 0.9561, 1.0579, 1.0713, 0.9692, 1.0516, 1.017, 1.1354, 0.9809, 0.9996, 1.043, 1.0357 \
+    ], \
+    [ \
+        1.0108, 1.1376, 1.0721, 1.0528, 0.995, 1.1197, 1.0286, 0.9314, 0.9356, 0.9788, 1.1042, 1.035, 0.9397, \
+        0.9724, 0.9419, 0.8898, 1.0403, 1.0514, 1.04, 0.9706, 1.0519, 1.0206, 0.9933, 0.9634, 1.0379, 0.9607, \
+        1.0581, 0.9875, 0.9436, 0.9623, 1.0085, 1.1016, 1.0036, 0.9994, 0.9921, 0.9508, 1.0592, 1.0297, 1.059 \
+    ], \
+    [ \
+        0.9849, 1.021, 1.0671, 0.9223, 1.0046, 1.0392, 1.0064, 1.0892, 1.0258, 1.0905, 1.0285, 0.9985, 0.9831, \
+        0.9374, 0.9571, 0.9599, 1.0033, 1.0366, 1.0372, 0.9934, 1.0872, 0.9638, 0.9658, 1.0468, 1.0015, 1.0452, \
+        1.017, 0.9914, 1.0459, 1.1395, 0.9688, 1.0623, 0.9539, 0.9584, 1.0586, 0.935, 0.9993, 1.0544, 1.1194 \
+    ], \
+    [ \
+        1.0042, 0.9729, 1.0274, 0.9373, 1.0679, 1.012, 1.0242, 1.0365, 1.0316, 1.0315, 0.9913, 1.0632, 1.072, \
+        1.1133, 0.9225, 1.1005, 0.941, 1.0694, 0.9025, 0.9095, 1.0291, 1.0448, 1.0252, 1.0592, 0.9909, 0.9331, \
+        1.0083, 0.9971, 1.0204, 1.0273, 0.9802, 1.061, 0.9711, 0.8642, 0.9851, 0.9575, 1.077, 1.029, 1.0971 \
+    ] \
+]
+testSymbols = ['A', 'B', 'C', 'D']
+
+# The test stocks' analysis period (2020-02 through 2023-01) and projection (2023-02 through 2023-04) price relatives
+testAnalysisRelatives = []
+testHorizonRelatives = []
+for testStockRelatives in testRelatives:
+    arrayPush(testAnalysisRelatives, arraySlice(testStockRelatives, 0, 36))
+    arrayPush(testHorizonRelatives, arraySlice(testStockRelatives, 36))
+endfor
+
+# The test target annual returns - the original program's monthly price relative targets, annualized
+testTargets = [markowitzAnnualReturn(1.005, 12), markowitzAnnualReturn(1.015, 12), markowitzAnnualReturn(1.08, 12)]
+
+# The test run's stock statistics and portfolios, as computed by a transliteration of the original Fortran program
+testRunStocks = [ \
+    {'symbol': 'A', 'expectedReturn': 31.237914567341374, 'variance': 23.176636108251117, 'realizedReturn': 35.949660852698194}, \
+    {'symbol': 'B', 'expectedReturn': -19.950708023795393, 'variance': 30.600710345583668, 'realizedReturn': 77.96663127832548}, \
+    {'symbol': 'C', 'expectedReturn': 11.60763751884646, 'variance': 24.541968416154234, 'realizedReturn': 93.52913207469793}, \
+    {'symbol': 'D', 'expectedReturn': -23.004686657953144, 'variance': 30.26582797964631, 'realizedReturn': 118.52904733713197} \
+]
+testRunPortfolios = [ \
+    { \
+        'target': arrayGet(testTargets, 0), \
+        'solved': true, \
+        'allocations': [ \
+            {'symbol': 'A', 'weight': 0.39587544733271784}, \
+            {'symbol': 'B', 'weight': 0.22878186905668152}, \
+            {'symbol': 'C', 'weight': 0.2674295111830437}, \
+            {'symbol': 'D', 'weight': 0.1079131724275569} \
+        ], \
+        'deleted': [], \
+        'deletedWeights': [], \
+        'variance': 6.38191498843673, \
+        'realizedReturn': 67.91586178632521 \
+    }, \
+    { \
+        'target': arrayGet(testTargets, 1), \
+        'solved': true, \
+        'allocations': [ \
+            {'symbol': 'A', 'weight': 0.5567053089869428}, \
+            {'symbol': 'B', 'weight': 0.06641041655307287}, \
+            {'symbol': 'C', 'weight': 0.3768842744599843} \
+        ], \
+        'deleted': ['D'], \
+        'deletedWeights': [-0.05606348427851773], \
+        'variance': 9.109149470933982, \
+        'realizedReturn': 58.68235370379473 \
+    }, \
+    { \
+        'target': arrayGet(testTargets, 2), \
+        'solved': false, \
+        'allocations': [], \
+        'deleted': ['D', 'B', 'C'], \
+        'deletedWeights': [-1.121911752868005, -1.7071558357812422, -4.161419031709107] \
+    } \
+]
+
+
+# A test Yahoo Finance chart API response - 2026-06 (no price) through 2026-10 (the current month)
+function testYahooResponse(meta):
+    objectAssign(meta, {'gmtoffset': -14400, 'regularMarketTime': 1791576000})
+    return jsonStringify({'chart': {'result': [{ \
+        'meta': meta, \
+        'timestamp': [1780286400, 1782878400, 1785556800, 1788235200, 1791576000], \
+        'indicators': { \
+            'quote': [{'close': [null, 9.5, 10.5, 12.5, 13.5]}], \
+            'adjclose': [{'adjclose': [null, 9, 10, 12, 13]}] \
+        } \
+    }]}})
+endfunction

@@ -9,9 +9,13 @@ API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
 [MarkdownUp](https://craigahobbs.github.io/markdown-up/) frontend that calls it. Markowitz portfolio analyzer
 
 - `SPEC.md` - the application specification
-- `backend/markowitz.bare` - the backend: the API's Schema Markdown types, its action functions, and the
-  `markowitzApplication` WSGI application function, created by `wsgiCreateAPIApplication` from the `wsgi.bare`
-  include library. Its API documentation is at `/doc/`.
+- `backend/markowitz.bare` - the backend: the API's action functions, and the `markowitzApplication` WSGI
+  application function, created by `wsgiCreateAPIApplication` from the `wsgi.bare` include library. Its API
+  documentation is at `/doc/`. It includes the backend's modules:
+  - `backend/markowitzAnalysis.bare` - the Markowitz portfolio analysis (`markowitzAnalyzeStocks` and
+    `markowitzPortfolio`), a port of the original program
+  - `backend/markowitzCouch.bare` - the CouchDB database URL, headers, and request helpers (`markowitzDB*`)
+  - `backend/markowitzYahoo.bare` - the Yahoo Finance stock price download (`markowitzYahooDownload`)
 - `frontend/markowitz.bare` - the frontend MarkdownUp application, whose main function `markowitzMain()` is
   called from `frontend/markowitz.md`
 - `frontend/markowitzTypes.bare` - the API's Schema Markdown types, `markowitzTypes`, shared by the backend and
@@ -22,11 +26,12 @@ API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
   e.g. "S&P 100"), and `run` documents. `wsgi.py` reads the `MARKOWITZ_COUCH_URL` and `MARKOWITZ_COUCH_CREDENTIALS`
   ("user:password") environment variables. Stock prices are downloaded from Yahoo Finance's chart API by the
   `updateStocks` action - the frontend updates a group's stocks, or every stock, a chunk of symbols at a time.
-- `backend/markowitzAdmin.bare` - the database administration commands (`markowitzAdmin(args)`): `check`, `init`, and
-  `reset`. `python3 wsgi.py check|init|reset` runs them with the same environment variables; the Makefile's `run`,
-  `init`, and `reset` targets call it. Both save the built-in stock groups, `backend/markowitzGroups.json` (Yahoo
-  Finance symbols, e.g. "BRK-B" - edit it to update an index's members).
-- `original/` - the 1967 Fortran program scans that the backend's analysis (`markowitzAnalyze`) ports
+- `admin/markowitzAdmin.bare` - the database administration commands (`markowitzAdmin(args)`): `check`, `init`, and
+  `reset`. It includes the backend, but isn't part of the web application - `wsgi.py` doesn't load `admin/`.
+  `python3 wsgi.py check|init|reset` runs them with the same environment variables; the Makefile's `run`, `init`,
+  and `reset` targets call it. Both save the built-in stock groups, `admin/markowitzGroups.json` (Yahoo Finance
+  symbols, e.g. "BRK-B" - edit it to update an index's members).
+- `original/` - the 1967 Fortran program scans that the backend's analysis (`backend/markowitzAnalysis.bare`) ports
 - `wsgi.py` - the WSGI application, which `make run` serves with waitress (named `wsgi`, not `markowitz`, so it
   can't collide with a Python module of the same name). It reads the application
   source once, at startup - restart the server after editing - and passes the backend the `markowitzStatics`
@@ -34,7 +39,8 @@ API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
   `/<file>`, and `/` for `frontend/index.html`) and the MarkdownUp application
   (downloaded to `build/markdown-up/` by `make run`, at `/markdown-up/<file>`). Configuration and secrets (e.g.
   database credentials) come from environment variables - read them in `wsgi.py` and add them to its `globals_`
-- `test/` - the unit tests, `test/backend/` and `test/frontend/`, with a
+- `test/` - the unit tests, `test/backend/` (a test file for each backend file, and the shared
+  `testMarkowitzHelpers.bare` fixtures) and `test/frontend/`, with a
   `runTests.bare` runner and an `index.html` to run them in a browser. The pages load MarkdownUp from
   `build/markdown-up/` (downloaded by `make run`), so serve the project root with a static file server (e.g.
   `python3 -m http.server`) and open `/test/backend/` or `/test/frontend/`.

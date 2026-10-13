@@ -79,7 +79,7 @@ lint: lint-backend lint-frontend
 # -s lints the test runner without executing it (that's the test target).
 .PHONY: lint-backend
 lint-backend: $(DEFAULT_VENV_BUILD) backend/$(APP).bare frontend/$(APP)Types.bare
-	$(DEFAULT_VENV_BIN)/bare -x backend/$(APP).bare backend/$(APP)Admin.bare test/backend/test*.bare
+	$(DEFAULT_VENV_BIN)/bare -x admin/*.bare backend/*.bare test/backend/test*.bare
 	$(DEFAULT_VENV_BIN)/bare -s -m test/backend/runTests.bare
 
 

@@ -6,7 +6,7 @@ include <unittestMock.bare>
 markowitzCouchCredentials = 'admin:secret'
 
 
-include '../../backend/markowitzAdmin.bare'
+include '../../admin/markowitzAdmin.bare'
 
 
 # The test server and database URLs and headers
