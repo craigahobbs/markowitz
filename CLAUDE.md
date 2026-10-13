@@ -10,7 +10,8 @@ API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
 
 - `SPEC.md` - the application specification
 - `backend/markowitz.bare` - the backend: the API's action functions, and the `markowitzApplication` WSGI
-  application function, created by `wsgiCreateAPIApplication` from the `wsgi.bare` include library. Its API
+  application function, which rejects a cross-origin request (`HTTP_ORIGIN`) and calls the API application,
+  `markowitzAPIApplication`, created by `wsgiCreateAPIApplication` from the `wsgi.bare` include library. Its API
   documentation is at `/doc/`. It includes the backend's modules:
   - `backend/markowitzAnalysis.bare` - the Markowitz portfolio analysis (`markowitzAnalyzeStocks` and
     `markowitzPortfolio`), a port of the original program

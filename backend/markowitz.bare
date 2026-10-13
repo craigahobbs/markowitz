@@ -466,5 +466,17 @@ markowitzRequests = [ \
 ]
 arrayExtend(markowitzRequests, wsgiStaticRequests(systemGlobalGet('markowitzStatics', {}), '../'))
 
-# The WSGI application function
-markowitzApplication = wsgiCreateAPIApplication(markowitzTypes, {'doc': true, 'requests': markowitzRequests})
+# The API application
+markowitzAPIApplication = wsgiCreateAPIApplication(markowitzTypes, {'doc': true, 'requests': markowitzRequests})
+
+
+# The WSGI application function - a browser sends a request's origin (its page's scheme and host), so a request from
+# another site's page is rejected. Otherwise, a page on any site could call the actions (e.g. "deleteGroup") - a
+# cross-origin POST with a text body isn't preflighted.
+async function markowitzApplication(environ):
+    origin = objectGet(environ, 'HTTP_ORIGIN')
+    if origin != null && origin != objectGet(environ, 'wsgi.url_scheme', 'http') + '://' + objectGet(environ, 'HTTP_HOST'):
+        return wsgiResponseText('403 Forbidden')
+    endif
+    return markowitzAPIApplication(environ)
+endfunction

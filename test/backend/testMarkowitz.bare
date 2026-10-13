@@ -117,6 +117,41 @@ endfunction
 unittestRunTest('testMarkowitzApplication_static')
 
 
+# A request environ from a page's origin (e.g. "http://127.0.0.1:8080") to the deleteGroup action
+function testOriginEnviron(origin):
+    return { \
+        'REQUEST_METHOD': 'POST', \
+        'PATH_INFO': '/deleteGroup', \
+        'QUERY_STRING': '', \
+        'wsgi.input': '{"name": "Dow 30"}', \
+        'wsgi.url_scheme': 'http', \
+        'HTTP_HOST': '127.0.0.1:8080', \
+        'HTTP_ORIGIN': origin \
+    }
+endfunction
+
+
+async function testMarkowitzApplication_sameOrigin():
+    # The action is called - its database request fails
+    testMockAll({})
+    response = markowitzApplication(testOriginEnviron('http://127.0.0.1:8080'))
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+    unittestEqual(objectGet(response, 'status'), '500 Internal Server Error')
+endfunction
+unittestRunTest('testMarkowitzApplication_sameOrigin')
+
+
+async function testMarkowitzApplication_crossOrigin():
+    testMockAll({})
+    unittestDeepEqual( \
+        markowitzApplication(testOriginEnviron('https://example.com')), \
+        {'status': '403 Forbidden', 'headers': [['Content-Type', 'text/plain; charset=utf-8']], 'content': '403 Forbidden'} \
+    )
+    unittestDeepEqual(unittestMockEnd(), [])
+endfunction
+unittestRunTest('testMarkowitzApplication_crossOrigin')
+
+
 #
 # getStocks tests
 #
