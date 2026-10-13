@@ -367,7 +367,7 @@ async function testMarkowitzStockPage():
     arrayExtend(expected, testHeaderCalls('IBM', 'IBM', "#var.vPage='stocks'"))
     arrayPush(expected, \
         ['markdownPrint', [ \
-            '- **Name:** International Business Machines', \
+            '- **Name:** International Business Machines \\*IBM\\*', \
             '- **Currency:** USD', \
             '- **Months:** 777, 1962-01 to 2026-09', \
             '- **Updated:** 2026-10-10 12:30', \

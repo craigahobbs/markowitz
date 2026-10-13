@@ -29,7 +29,7 @@ endfunction
 
 async function testMarkowitzRunsPage():
     groupRun = { \
-        'id': 'r2', 'name': 'Group Run', 'created': testCreated, 'symbols': ['A', 'B'], 'group': 'S&P 100', \
+        'id': 'r2', 'name': 'Group Run', 'created': testCreated, 'symbols': ['A', 'B'], 'group': 'Tech | AI', \
         'endMonth': '2023-01', 'months': 36, 'horizon': 3, 'targets': [10] \
     }
     unittestMockAll({'systemFetch': {'getRuns': jsonStringify({'runs': [testRun, groupRun]})}})
@@ -38,10 +38,10 @@ async function testMarkowitzRunsPage():
     arrayPush(expected, \
         ['systemFetch', ['getRuns']], \
         ['markdownPrint', [[ \
-            '| Run                                             | Created          | Stocks | Group   | Analysis Period      | Targets                |', \
-            '|-------------------------------------------------|------------------|-------:|---------|----------------------|------------------------|', \
-            "| [Blue \\<Chips\\>](#var.vId='r1'&var.vPage='run') | 2026-10-10 12:30 |      4 |         | 36 months to 2023-01 | 6.17%, 19.56%, 151.80% |", \
-            "| [Group Run](#var.vId='r2'&var.vPage='run')      | 2026-10-10 12:30 |      2 | S&P 100 | 36 months to 2023-01 | 10.00%                 |" \
+            '| Run                                             | Created          | Stocks | Group      | Analysis Period      | Targets                |', \
+            '|-------------------------------------------------|------------------|-------:|------------|----------------------|------------------------|', \
+            "| [Blue \\<Chips\\>](#var.vId='r1'&var.vPage='run') | 2026-10-10 12:30 |      4 |            | 36 months to 2023-01 | 6.17%, 19.56%, 151.80% |", \
+            "| [Group Run](#var.vId='r2'&var.vPage='run')      | 2026-10-10 12:30 |      2 | Tech \\| AI | 36 months to 2023-01 | 10.00%                 |" \
         ]]] \
     )
     unittestDeepEqual(unittestMockEnd(), expected)

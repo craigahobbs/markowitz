@@ -37,7 +37,7 @@ async function markowitzRunsPage():
                 if(objectGet(run, 'running'), ' (incomplete)', ''), \
             'Created': markowitzDatetimeText(objectGet(run, 'created')), \
             'Stocks': stringNew(arrayLength(objectGet(run, 'symbols'))), \
-            'Group': objectGet(run, 'group', ''), \
+            'Group': markdownEscape(objectGet(run, 'group', '')), \
             'Analysis Period': markowitzPeriodText(run), \
             'Targets': markowitzTargetsText(objectGet(run, 'targets')) \
         })

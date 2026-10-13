@@ -65,7 +65,7 @@ function markowitzStocksTable(stocks):
     for stock in stocks:
         arrayPush(data, { \
             'Stock': markowitzStockLink(objectGet(stock, 'symbol')), \
-            'Name': objectGet(stock, 'name', ''), \
+            'Name': markdownEscape(objectGet(stock, 'name', '')), \
             'First Month': objectGet(stock, 'firstMonth'), \
             'Last Month': objectGet(stock, 'lastMonth'), \
             'Months': stringNew(objectGet(stock, 'monthCount')), \
