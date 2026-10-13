@@ -200,8 +200,7 @@ async function markowitzOnUpdateChunk(update):
         markowitzUpdateProgress(update)
         return
     endif
-    pageFn = objectGet(update, 'pageFn')
-    pageFn(markowitzUpdateMessage(objectGet(update, 'updated'), objectGet(update, 'failed'), 0))
+    markowitzUpdateDone(update, 0)
 endfunction
 
 
@@ -210,7 +209,12 @@ endfunction
 # already-queued window timeout, renders and schedules nothing.
 async function markowitzOnUpdateStop(update):
     objectSet(update, 'stopped', true)
-    stoppedCount = arrayLength(objectGet(update, 'symbols')) - objectGet(update, 'count')
+    markowitzUpdateDone(update, arrayLength(objectGet(update, 'symbols')) - objectGet(update, 'count'))
+endfunction
+
+
+# Render the page with a stock update's message - the count of stocks not updated if the update was stopped
+async function markowitzUpdateDone(update, stoppedCount):
     pageFn = objectGet(update, 'pageFn')
     pageFn(markowitzUpdateMessage(objectGet(update, 'updated'), objectGet(update, 'failed'), stoppedCount))
 endfunction

@@ -143,9 +143,7 @@ async function markowitzRunPage(args, message):
     allocationFields = ['Stock']
     allocationFormats = {'Stock': {'markdown': true}}
     for symbol in symbols:
-        arrayPush(allocationData, { \
-            'Stock': argsLink(markowitzArguments, symbol, {'page': 'stock', 'symbol': symbol}, true) \
-        })
+        arrayPush(allocationData, {'Stock': markowitzStockLink(symbol)})
     endfor
     for portfolio, ixPortfolio in portfolios:
         field = 'P' + ixPortfolio
@@ -171,9 +169,8 @@ async function markowitzRunPage(args, message):
     # The stocks table
     stockData = []
     for stock in objectGet(run, 'stocks'):
-        stockSymbol = objectGet(stock, 'symbol')
         arrayPush(stockData, { \
-            'Stock': argsLink(markowitzArguments, stockSymbol, {'page': 'stock', 'symbol': stockSymbol}, true), \
+            'Stock': markowitzStockLink(objectGet(stock, 'symbol')), \
             'Projected Return': markowitzPercentText(objectGet(stock, 'expectedReturn')), \
             'Realized Return': markowitzPercentText(objectGet(stock, 'realizedReturn')), \
             'Risk': markowitzPercentText(mathSqrt(objectGet(stock, 'variance'))) \
@@ -243,7 +240,7 @@ endfunction
 # An excluded stocks table row
 function markowitzExcludedRow(symbol, excludedFrom, reason):
     return { \
-        'Stock': argsLink(markowitzArguments, symbol, {'page': 'stock', 'symbol': symbol}, true), \
+        'Stock': markowitzStockLink(symbol), \
         'Excluded From': excludedFrom, \
         'Reason': reason \
     }
@@ -283,7 +280,7 @@ endfunction
 function markowitzRunProgress(progress):
     count = objectGet(progress, 'count')
     total = objectGet(progress, 'total')
-    markowitzHeader(objectGet(progress, 'name'), null)
+    markowitzHeader(objectGet(progress, 'name'))
     markdownPrint( \
         '**Running...** Computed ' + count + ' of ' + total + ' portfolios (' + numberToFixed(100 * count / total, 0) + \
             '%). A run of many stocks can take a minute.', \

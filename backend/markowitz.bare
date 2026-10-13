@@ -23,15 +23,11 @@ markowitzRunInfoFields = ['_id', 'name', 'created', 'symbols', 'group', 'endMont
 
 
 async function getStocks():
-    docs = markowitzDBFind({'type': 'stock'}, markowitzStockInfoFields)
-    if docs == null:
+    stocks = markowitzFindStocks({'type': 'stock'})
+    if stocks == null:
         return markowitzDatabaseError()
     endif
-    stocks = []
-    for doc in docs:
-        arrayPush(stocks, markowitzStockInfo(doc))
-    endfor
-    return {'stocks': arraySort(stocks, markowitzCompareSymbol)}
+    return {'stocks': stocks}
 endfunction
 
 
@@ -129,15 +125,11 @@ async function getGroup(request):
         return markowitzUnknownGroup(name)
     endif
     symbols = objectGet(doc, 'symbols')
-    stockDocs = markowitzDBFind({'type': 'stock', 'symbol': {'$in': symbols}}, markowitzStockInfoFields)
-    if stockDocs == null:
+    stocks = markowitzFindStocks({'type': 'stock', 'symbol': {'$in': symbols}})
+    if stocks == null:
         return markowitzDatabaseError()
     endif
-    stocks = []
-    for stockDoc in stockDocs:
-        arrayPush(stocks, markowitzStockInfo(stockDoc))
-    endfor
-    return {'group': {'name': name, 'symbols': symbols}, 'stocks': arraySort(stocks, markowitzCompareSymbol)}
+    return {'group': {'name': name, 'symbols': symbols}, 'stocks': stocks}
 endfunction
 
 
@@ -369,6 +361,20 @@ endfunction
 # Get a stock document's summary
 function markowitzStockInfo(doc):
     return markowitzDocFields(doc, markowitzStockInfoFields)
+endfunction
+
+
+# Find stock documents with a Mango selector - returns their summaries, sorted by symbol, or null on failure
+async function markowitzFindStocks(selector):
+    docs = markowitzDBFind(selector, markowitzStockInfoFields)
+    if docs == null:
+        return null
+    endif
+    stocks = []
+    for doc in docs:
+        arrayPush(stocks, markowitzStockInfo(doc))
+    endfor
+    return arraySort(stocks, markowitzCompareSymbol)
 endfunction
 
 

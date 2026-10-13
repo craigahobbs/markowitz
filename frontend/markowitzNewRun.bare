@@ -51,6 +51,7 @@ async function markowitzNewRunPage(args, form, message, selecting, stocks, group
 
     # Start with the default form (and the group argument's months and excluded stocks), or a prior run's
     id = objectGet(args, 'id')
+    groupArg = objectGet(args, 'group')
     if form == null:
         form = objectCopy(markowitzRunFormDefault)
         runResponse = if(id != null, markowitzFetch('getRun?id=' + urlEncodeComponent(id)))
@@ -69,14 +70,13 @@ async function markowitzNewRunPage(args, form, message, selecting, stocks, group
                 'targets': arrayJoin(targets, ', '), \
                 'exclude': arrayJoin(markowitzSymbolList(objectGet(run, 'excluded', [])), ' ') \
             })
-        elif objectHas(args, 'group') && stocks != null && groups != null:
-            objectSet(form, 'group', objectGet(args, 'group'))
+        elif groupArg != null && stocks != null && groups != null:
+            objectSet(form, 'group', groupArg)
             markowitzRunFormUpdate(form, stocks, groups, true)
         endif
     endif
 
     # Back to the run (run again), the group, or the runs
-    groupArg = objectGet(args, 'group')
     back = if(id != null, {'page': 'run', 'id': id}, if(groupArg != null, {'page': 'group', 'group': groupArg}, {'page': 'runs'}))
     markowitzHeader('New Run', back)
     if stocks == null || groups == null:
@@ -332,7 +332,7 @@ async function markowitzOnStartRun(args, stocks, groups, group):
     endif
 
     # Render the running run's page, and start the run in a window timeout so the page renders first
-    markowitzHeader('New Run', null)
+    markowitzHeader('New Run')
     markdownPrint( \
         '**Running "' + markdownEscape(objectGet(form, 'name')) + '"...** A run of many stocks can take a minute.', \
         '' \

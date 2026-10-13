@@ -53,13 +53,18 @@ async function markowitzFetch(url, request):
 endfunction
 
 
+# A stock page link
+function markowitzStockLink(symbol):
+    return argsLink(markowitzArguments, symbol, {'page': 'stock', 'symbol': symbol}, true)
+endfunction
+
+
 # The stocks table Markdown lines
 function markowitzStocksTable(stocks):
     data = []
     for stock in stocks:
-        symbol = objectGet(stock, 'symbol')
         arrayPush(data, { \
-            'Stock': argsLink(markowitzArguments, symbol, {'page': 'stock', 'symbol': symbol}, true), \
+            'Stock': markowitzStockLink(objectGet(stock, 'symbol')), \
             'Name': objectGet(stock, 'name', ''), \
             'First Month': objectGet(stock, 'firstMonth'), \
             'Last Month': objectGet(stock, 'lastMonth'), \
