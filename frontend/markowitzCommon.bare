@@ -1,0 +1,157 @@
+# The Markowitz application's common page helpers
+
+include <args.bare>
+include <dataTable.bare>
+include <forms.bare>
+include <markdown.bare>
+
+
+# The application's URL arguments
+markowitzArguments = [ \
+    {'name': 'page', 'default': 'runs'}, \
+    {'name': 'id'}, \
+    {'name': 'symbol'}, \
+    {'name': 'group'} \
+]
+
+
+# The list text separator regex - spaces and commas
+markowitzRegexListSeparator = regexNew('[\\s,]+')
+
+
+# Render the page header and menu - and, at the top, a "Back" link, if there are its URL arguments
+function markowitzHeader(title, back):
+    documentSetTitle(title)
+    if back != null:
+        markdownPrint(argsLink(markowitzArguments, 'Back', back, true), '')
+    endif
+    markdownPrint( \
+        '# ' + markdownEscape(title), \
+        '', \
+        argsLink(markowitzArguments, 'Runs', {'page': 'runs'}, true) + ' | ' + \
+            argsLink(markowitzArguments, 'New Run', {'page': 'new'}, true) + ' | ' + \
+            argsLink(markowitzArguments, 'Stocks', {'page': 'stocks'}, true) + ' | ' + \
+            argsLink(markowitzArguments, 'Groups', {'page': 'groups'}, true) + ' | ' + \
+            '[API Documentation](doc/)', \
+        '' \
+    )
+endfunction
+
+
+# Render a page message, if any
+function markowitzMessage(message):
+    if message:
+        markdownPrint('**' + markdownEscape(message) + '**', '')
+    endif
+endfunction
+
+
+# Call an API action - a POST if there's a request object. Returns the response object, or null on failure.
+async function markowitzFetch(url, request):
+    responseText = systemFetch(if(request != null, {'url': url, 'body': jsonStringify(request)}, url))
+    return if(responseText != null, jsonParse(responseText))
+endfunction
+
+
+# The stocks table Markdown lines
+function markowitzStocksTable(stocks):
+    data = []
+    for stock in stocks:
+        symbol = objectGet(stock, 'symbol')
+        arrayPush(data, { \
+            'Stock': argsLink(markowitzArguments, symbol, {'page': 'stock', 'symbol': symbol}, true), \
+            'Name': objectGet(stock, 'name', ''), \
+            'First Month': objectGet(stock, 'firstMonth'), \
+            'Last Month': objectGet(stock, 'lastMonth'), \
+            'Months': stringNew(objectGet(stock, 'monthCount')), \
+            'Updated': markowitzDatetimeText(objectGet(stock, 'updated')) \
+        })
+    endfor
+    return dataTableMarkdown(data, { \
+        'fields': ['Stock', 'Name', 'First Month', 'Last Month', 'Months', 'Updated'], \
+        'formats': {'Stock': {'markdown': true}, 'Months': {'align': 'right'}} \
+    })
+endfunction
+
+
+# Get a map of symbol to stock summary
+function markowitzStockMap(stocks):
+    stockMap = {}
+    for stock in stocks:
+        objectSet(stockMap, objectGet(stock, 'symbol'), stock)
+    endfor
+    return stockMap
+endfunction
+
+
+# Get the symbols of an array of objects with a "symbol" (e.g. stocks or exclusions)
+function markowitzSymbolList(items):
+    symbols = []
+    for item in items:
+        arrayPush(symbols, objectGet(item, 'symbol'))
+    endfor
+    return symbols
+endfunction
+
+
+# Get the symbols without a stock (with prices)
+function markowitzMissingSymbols(symbols, stocks):
+    stockMap = markowitzStockMap(stocks)
+    missing = []
+    for symbol in symbols:
+        if !objectHas(stockMap, symbol):
+            arrayPush(missing, symbol)
+        endif
+    endfor
+    return missing
+endfunction
+
+
+# A progress bar, and its Stop button, element model
+function markowitzProgressElements(count, total, onStop):
+    return {'html': 'p', 'elem': [ \
+        {'html': 'progress', 'attr': {'max': total, 'value': count, 'style': 'width: 30em; max-width: 100%;'}}, \
+        {'text': ' '}, \
+        formsLinkButtonElements('Stop', onStop) \
+    ]}
+endfunction
+
+
+# Split a list text on spaces and commas
+function markowitzParseList(text):
+    items = []
+    for item in regexSplit(markowitzRegexListSeparator, text):
+        if item != '':
+            arrayPush(items, item)
+        endif
+    endfor
+    return items
+endfunction
+
+
+# Format a percent value - empty if null
+function markowitzPercentText(value):
+    return if(value != null, numberToFixed(value, 2) + '%', '')
+endfunction
+
+
+# Format target returns
+function markowitzTargetsText(targets):
+    texts = []
+    for target in targets:
+        arrayPush(texts, markowitzPercentText(target))
+    endfor
+    return arrayJoin(texts, ', ')
+endfunction
+
+
+# Format a run's analysis period
+function markowitzPeriodText(run):
+    return objectGet(run, 'months') + ' months to ' + objectGet(run, 'endMonth')
+endfunction
+
+
+# Format an ISO datetime string as a local "YYYY-MM-DD HH:MM" string
+function markowitzDatetimeText(text):
+    return stringReplace(stringSlice(datetimeISOFormat(datetimeISOParse(text)), 0, 16), 'T', ' ')
+endfunction

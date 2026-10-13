@@ -7,6 +7,12 @@ unittestCoverageStart()
 
 # Test includes
 include 'testMarkowitz.bare'
+include 'testMarkowitzCommon.bare'
+include 'testMarkowitzGroups.bare'
+include 'testMarkowitzNewRun.bare'
+include 'testMarkowitzRuns.bare'
+include 'testMarkowitzStocks.bare'
+include 'testMarkowitzUtil.bare'
 
 # Stop coverage
 unittestCoverageStop()

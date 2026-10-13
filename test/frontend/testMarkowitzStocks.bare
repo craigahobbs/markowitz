@@ -1,0 +1,501 @@
+include <dataLineChart.bare>
+include <forms.bare>
+include <unittest.bare>
+include <unittestMock.bare>
+include '../../frontend/markowitzStocks.bare'
+include 'testMarkowitzHelpers.bare'
+
+
+#
+# Stocks page tests
+#
+
+
+# The stocks page's update controls text
+testStocksPageText = ['markdownPrint', [ \
+    'Download stocks\' monthly prices from Yahoo Finance. Enter stock symbols, separated by spaces or commas, to', \
+    'add or update them.', \
+    '' \
+]]
+
+
+async function testMarkowitzStocksPage():
+    unittestMockAll(testNewRunData())
+    markowitzStocksPage({'page': 'stocks'})
+    expected = testHeaderCalls('Stocks', 'Stocks')
+    arrayPush(expected, \
+        ['systemFetch', ['getStocks']], \
+        ['systemFetch', ['getGroups']], \
+        testStocksPageText, \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            formsTextElements('markowitz-symbols', '', 40), \
+            {'text': ' '}, \
+            formsLinkButtonElements('Add / Update', '<function>'), \
+            {'text': ' | '}, \
+            formsLinkButtonElements('Update All', '<function>') \
+        ]}]], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            {'html': 'b', 'elem': {'text': 'Update a group:'}}, \
+            {'text': ' '}, \
+            formsLinkButtonElements('Dow 30', '<function>'), \
+            {'text': ' | '}, \
+            formsLinkButtonElements('S&P 100', '<function>') \
+        ]}]], \
+        ['markdownPrint', [testStocksTable]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStocksPage')
+
+
+async function testMarkowitzStocksPage_empty():
+    unittestMockAll(testNewRunData([], []))
+    markowitzStocksPage({'page': 'stocks'}, 'Enter one to fifty stock symbols.')
+    expected = testHeaderCalls('Stocks', 'Stocks')
+    arrayPush(expected, \
+        ['systemFetch', ['getStocks']], \
+        ['systemFetch', ['getGroups']], \
+        ['markdownPrint', ['**Enter one to fifty stock symbols.**', '']], \
+        testStocksPageText, \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            formsTextElements('markowitz-symbols', '', 40), \
+            {'text': ' '}, \
+            formsLinkButtonElements('Add / Update', '<function>') \
+        ]}]], \
+        ['markdownPrint', ['There are no stocks.']] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStocksPage_empty')
+
+
+async function testMarkowitzStocksPage_error():
+    unittestMockAll({'systemFetch': {'getGroups': jsonStringify({'groups': testGroups})}})
+    markowitzStocksPage({'page': 'stocks'})
+    expected = testHeaderCalls('Stocks', 'Stocks')
+    arrayPush(expected, \
+        ['systemFetch', ['getStocks']], \
+        ['systemFetch', ['getGroups']], \
+        ['markdownPrint', ['**Error:** The stocks could not be loaded.']] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStocksPage_error')
+
+
+# The stocks page's fetch mock data, with an update response
+function testStocksPageData(results):
+    data = testNewRunData()
+    objectSet(objectGet(data, 'systemFetch'), 'updateStocks', jsonStringify({'results': results}))
+    return data
+endfunction
+
+
+async function testMarkowitzStocksPage_updateBinding():
+    args = {'page': 'stocks'}
+    data = testStocksPageData([{'symbol': 'MSFT', 'stock': arrayGet(testStocks, 0)}])
+    objectSet(data, 'documentInputValue', {'markowitz-symbols': 'msft'})
+    testVerifyClick(systemPartial(markowitzStocksPage, args), 'Add / Update', systemPartial(markowitzOnUpdateStocks, args, null), data)
+endfunction
+unittestRunTest('testMarkowitzStocksPage_updateBinding')
+
+
+async function testMarkowitzStocksPage_updateAllBinding():
+    args = {'page': 'stocks'}
+    data = testStocksPageData([{'symbol': 'IBM', 'stock': arrayGet(testStocks, 0)}])
+    testVerifyClick(systemPartial(markowitzStocksPage, args), 'Update All', systemPartial(markowitzOnUpdateStocks, args, ['IBM', 'KO']), data)
+endfunction
+unittestRunTest('testMarkowitzStocksPage_updateAllBinding')
+
+
+async function testMarkowitzStocksPage_updateGroupBinding():
+    args = {'page': 'stocks'}
+    data = testStocksPageData([{'symbol': 'IBM', 'stock': arrayGet(testStocks, 0)}])
+    for group in testGroups:
+        testVerifyClick( \
+            systemPartial(markowitzStocksPage, args), objectGet(group, 'name'), \
+            systemPartial(markowitzOnUpdateStocks, args, objectGet(group, 'symbols')), data \
+        )
+    endfor
+endfunction
+unittestRunTest('testMarkowitzStocksPage_updateGroupBinding')
+
+
+async function testMarkowitzOnUpdateStocks():
+    unittestMockAll({'documentInputValue': {'markowitz-symbols': ' msft,xyz ibm '}})
+    markowitzOnUpdateStocks({'page': 'stocks'}, null)
+    expected = [['documentInputValue', ['markowitz-symbols']]]
+    arrayExtend(expected, testUpdateProgressCalls('Stocks', null, 0, 3, '0', ''))
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzOnUpdateStocks')
+
+
+async function testMarkowitzOnUpdateStocks_symbols():
+    unittestMockAll()
+    markowitzOnUpdateStocks({'page': 'stocks'}, ['KO', 'IBM'])
+    unittestDeepEqual(unittestMockEnd(), testUpdateProgressCalls('Stocks', null, 0, 2, '0', ''))
+endfunction
+unittestRunTest('testMarkowitzOnUpdateStocks_symbols')
+
+
+async function testMarkowitzOnUpdateStocks_invalid():
+    args = {'page': 'stocks'}
+    data = testNewRunData()
+    objectSet(data, 'documentInputValue', {'markowitz-symbols': ' '})
+    unittestMockAll(data)
+    markowitzOnUpdateStocks(args, null)
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['documentInputValue', ['markowitz-symbols']])
+    message = 'Enter one to fifty stock symbols.'
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(systemPartial(markowitzStocksPage, args, message), data))
+endfunction
+unittestRunTest('testMarkowitzOnUpdateStocks_invalid')
+
+
+async function testMarkowitzUpdateStocks():
+    unittestMockAll({'systemFetch': {'updateStocks': jsonStringify({'results': [ \
+        {'symbol': 'IBM', 'stock': arrayGet(testStocks, 0)}, \
+        {'symbol': 'KO', 'stock': arrayGet(testStocks, 1)} \
+    ]})}})
+    unittestEqual(markowitzUpdateStocks({'symbols': ['IBM', 'KO']}), 'Updated IBM, KO.')
+    unittestDeepEqual(unittestMockEnd(), [['systemFetch', [{'url': 'updateStocks', 'body': '{"symbols":["IBM","KO"]}'}]]])
+endfunction
+unittestRunTest('testMarkowitzUpdateStocks')
+
+
+async function testMarkowitzUpdateStocks_many():
+    results = []
+    while arrayLength(results) < 11:
+        arrayPush(results, {'symbol': 'S' + arrayLength(results), 'stock': arrayGet(testStocks, 0)})
+    endwhile
+    arrayPush(results, {'symbol': 'XYZ', 'error': 'Download failed'})
+    unittestMockAll({'systemFetch': {'updateStocks': jsonStringify({'results': results})}})
+    unittestEqual(markowitzUpdateStocks({'all': true}), 'Updated 11 stocks. Failed XYZ (Download failed).')
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testMarkowitzUpdateStocks_many')
+
+
+async function testMarkowitzUpdateStocks_none():
+    unittestMockAll({'systemFetch': {'updateStocks': jsonStringify({'results': []})}})
+    unittestEqual(markowitzUpdateStocks({'all': true}), 'There are no stocks to update.')
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testMarkowitzUpdateStocks_none')
+
+
+async function testMarkowitzUpdateStocks_failedMany():
+    results = []
+    while arrayLength(results) < 11:
+        arrayPush(results, {'symbol': 'S' + arrayLength(results), 'error': 'Download failed'})
+    endwhile
+    unittestMockAll({'systemFetch': {'updateStocks': jsonStringify({'results': results})}})
+    unittestEqual( \
+        markowitzUpdateStocks({'symbols': ['S0']}), \
+        'Failed 11 stocks: S0 (Download failed), S1 (Download failed), S2 (Download failed), S3 (Download failed), ' + \
+            'S4 (Download failed), S5 (Download failed), S6 (Download failed), S7 (Download failed), ' + \
+            'S8 (Download failed), S9 (Download failed), ...' \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testMarkowitzUpdateStocks_failedMany')
+
+
+async function testMarkowitzUpdateStocks_failed():
+    unittestMockAll({'systemFetch': {'updateStocks': jsonStringify({'results': [ \
+        {'symbol': 'XYZ', 'error': 'Download failed'}, \
+        {'symbol': 'ZZZ', 'error': 'Database update failed (conflict)'} \
+    ]})}})
+    unittestEqual( \
+        markowitzUpdateStocks({'symbols': ['XYZ', 'ZZZ']}), \
+        'Failed XYZ (Download failed), ZZZ (Database update failed (conflict)).' \
+    )
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testMarkowitzUpdateStocks_failed')
+
+
+async function testMarkowitzUpdateStocks_error():
+    unittestMockAll({})
+    unittestEqual(markowitzUpdateStocks({'symbols': ['IBM']}), 'The stock update failed.')
+    unittestEqual(arrayLength(unittestMockEnd()), 1)
+endfunction
+unittestRunTest('testMarkowitzUpdateStocks_error')
+
+
+#
+# Stock update tests
+#
+
+
+# A test stock update of symbols - rendering the stocks page when done
+function testUpdate(symbols, count):
+    update = { \
+        'title': 'Stocks', 'back': null, 'symbols': symbols, 'count': 0, 'updated': [], 'failed': [], \
+        'pageFn': systemPartial(markowitzStocksPage, {'page': 'stocks'}) \
+    }
+    objectSet(update, 'count', if(count != null, count, 0))
+    return update
+endfunction
+
+
+# Twelve test stock symbols - two chunks
+testUpdateSymbols = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9', 'S10', 'S11']
+
+
+function testMarkowitzUpdateStart():
+    unittestMockAll()
+    markowitzUpdateStart('S&P 100', {'page': 'groups'}, ['IBM', 'KO'], systemPartial(markowitzGroupPage, {'page': 'group'}))
+    unittestDeepEqual(unittestMockEnd(), testUpdateProgressCalls('S&P 100', "#var.vPage='groups'", 0, 2, '0', ''))
+endfunction
+unittestRunTest('testMarkowitzUpdateStart')
+
+
+function testMarkowitzUpdateProgress():
+    update = testUpdate(testUpdateSymbols, 10)
+    arrayPush(objectGet(update, 'failed'), 'S3 (Download failed)')
+    unittestMockAll()
+    markowitzUpdateProgress(update)
+    unittestDeepEqual(unittestMockEnd(), testUpdateProgressCalls('Stocks', null, 10, 12, '83', ', 1 failed'))
+endfunction
+unittestRunTest('testMarkowitzUpdateProgress')
+
+
+async function testMarkowitzUpdateProgress_timeoutBinding():
+    # The progress page's timeout downloads the next chunk
+    data = testStocksPageData([{'symbol': 'S0', 'stock': arrayGet(testStocks, 0)}])
+    callbacks = testCaptureTimeouts(systemPartial(markowitzUpdateProgress, testUpdate(testUpdateSymbols)), data)
+    testSameEffect(arrayGet(callbacks, 0), systemPartial(markowitzOnUpdateChunk, testUpdate(testUpdateSymbols)), data)
+endfunction
+unittestRunTest('testMarkowitzUpdateProgress_timeoutBinding')
+
+
+async function testMarkowitzUpdateProgress_stopBinding():
+    data = testNewRunData()
+    unittestMockAll(data)
+    markowitzUpdateProgress(testUpdate(testUpdateSymbols, 10))
+    found = testFindClick(unittestMockEnd(), 'Stop')
+    testSameEffect(found, systemPartial(markowitzOnUpdateStop, testUpdate(testUpdateSymbols, 10)), data)
+endfunction
+unittestRunTest('testMarkowitzUpdateProgress_stopBinding')
+
+
+async function testMarkowitzOnUpdateChunk():
+    # The first chunk - the progress is rendered and the next chunk is scheduled
+    update = testUpdate(testUpdateSymbols)
+    results = [{'symbol': 'S0', 'stock': arrayGet(testStocks, 0)}, {'symbol': 'S1', 'error': 'Download failed'}]
+    unittestMockAll({'systemFetch': {'updateStocks': jsonStringify({'results': results})}})
+    markowitzOnUpdateChunk(update)
+    expected = [['systemFetch', [{ \
+        'url': 'updateStocks', \
+        'body': jsonStringify({'symbols': ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9']}) \
+    }]]]
+    arrayExtend(expected, testUpdateProgressCalls('Stocks', null, 10, 12, '83', ', 1 failed'))
+    unittestDeepEqual(unittestMockEnd(), expected)
+    unittestEqual(objectGet(update, 'count'), 10)
+    unittestDeepEqual(objectGet(update, 'updated'), ['S0'])
+    unittestDeepEqual(objectGet(update, 'failed'), ['S1 (Download failed)'])
+endfunction
+unittestRunTest('testMarkowitzOnUpdateChunk')
+
+
+async function testMarkowitzOnUpdateChunk_done():
+    # The last chunk fails - the page is rendered with the update's message
+    update = testUpdate(testUpdateSymbols, 10)
+    arrayPush(objectGet(update, 'updated'), 'S0')
+    data = testNewRunData()
+    unittestMockAll(data)
+    markowitzOnUpdateChunk(update)
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['systemFetch', [{'url': 'updateStocks', 'body': '{"symbols":["S10","S11"]}'}]])
+    message = 'Updated S0. Failed S10 (The stock update failed), S11 (The stock update failed).'
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(systemPartial(markowitzStocksPage, {'page': 'stocks'}, message), data))
+endfunction
+unittestRunTest('testMarkowitzOnUpdateChunk_done')
+
+
+async function testMarkowitzOnUpdateStop():
+    update = testUpdate(testUpdateSymbols, 10)
+    arrayPush(objectGet(update, 'updated'), 'S0', 'S1')
+    data = testNewRunData()
+    unittestMockAll(data)
+    markowitzOnUpdateStop(update)
+    message = 'Updated S0, S1. Stopped - 2 stocks were not updated.'
+    unittestDeepEqual(unittestMockEnd(), testPageCalls(systemPartial(markowitzStocksPage, {'page': 'stocks'}, message), data))
+    unittestEqual(objectGet(update, 'stopped'), true)
+endfunction
+unittestRunTest('testMarkowitzOnUpdateStop')
+
+
+async function testMarkowitzOnUpdateChunk_stoppedDuring():
+    # Stop is clicked while the chunk downloads - the chunk renders and schedules nothing
+    update = testUpdate(testUpdateSymbols, 10)
+    response = jsonStringify({'results': [{'symbol': 'S10', 'stock': arrayGet(testStocks, 0)}]})
+    unittestMockOne('systemFetch', systemPartial(testStoppingFetch, update, response))
+    markowitzOnUpdateChunk(update)
+    unittestMockEnd()
+    unittestEqual(objectGet(update, 'count'), 10)
+    unittestDeepEqual(objectGet(update, 'updated'), ['S10'])
+endfunction
+unittestRunTest('testMarkowitzOnUpdateChunk_stoppedDuring')
+
+
+async function testMarkowitzOnUpdateChunk_stopped():
+    # The next chunk's timeout was queued behind the Stop click - it does nothing
+    update = testUpdate(testUpdateSymbols, 10)
+    objectSet(update, 'stopped', true)
+    unittestMockAll(testNewRunData())
+    markowitzOnUpdateChunk(update)
+    unittestDeepEqual(unittestMockEnd(), [])
+    unittestEqual(objectGet(update, 'count'), 10)
+endfunction
+unittestRunTest('testMarkowitzOnUpdateChunk_stopped')
+
+
+#
+# Stock page tests
+#
+
+
+async function testMarkowitzStockPage():
+    args = {'page': 'stock', 'symbol': 'IBM'}
+    prices = {'2026-08': 10, '2026-07': 9, '2025-12': 8.5}
+    unittestMockAll({'systemFetch': {'getStock?symbol=IBM': jsonStringify({'stock': arrayGet(testStocks, 0), 'prices': prices})}})
+    markowitzStockPage(args)
+    expected = [['systemFetch', ['getStock?symbol=IBM']]]
+    arrayExtend(expected, testHeaderCalls('IBM', 'IBM', "#var.vPage='stocks'"))
+    arrayPush(expected, \
+        ['markdownPrint', [ \
+            '- **Name:** International Business Machines', \
+            '- **Currency:** USD', \
+            '- **Months:** 777, 1962-01 to 2026-09', \
+            '- **Updated:** 2026-10-10 12:30', \
+            '' \
+        ]], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            formsLinkButtonElements('Update', '<function>'), \
+            {'text': ' | '}, \
+            formsLinkButtonElements('Delete', '<function>') \
+        ]}]], \
+        ['elementModelRender', [{'html': 'p', 'elem': dataLineChartElements( \
+            [ \
+                {'Month': datetimeNew(2025, 12, 1), 'Price': 8.5}, \
+                {'Month': datetimeNew(2026, 7, 1), 'Price': 9}, \
+                {'Month': datetimeNew(2026, 8, 1), 'Price': 10} \
+            ], \
+            {'title': 'Monthly Price (adjusted)', 'x': 'Month', 'y': ['Price'], 'yScale': 'log'} \
+        )}]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStockPage')
+
+
+async function testMarkowitzStockPage_message():
+    args = {'page': 'stock', 'symbol': 'ko'}
+    unittestMockAll({'systemFetch': {'getStock?symbol=ko': jsonStringify({'stock': arrayGet(testStocks, 1), 'prices': {'2026-07': 9}})}})
+    markowitzStockPage(args, 'Updated KO.')
+    calls = unittestMockEnd()
+    unittestDeepEqual(arraySlice(calls, 0, 7), [ \
+        ['systemFetch', ['getStock?symbol=ko']], \
+        ['documentSetTitle', ['KO']], \
+        ['markdownPrint', ["[Back](#var.vPage='stocks')", '']], \
+        ['markdownPrint', ['# KO', '', testMenu, '']], \
+        ['markdownPrint', ['**Updated KO.**', '']], \
+        ['markdownPrint', [ \
+            '- **Name:** ', \
+            '- **Currency:** ', \
+            '- **Months:** 501, 1985-01 to 2026-09', \
+            '- **Updated:** 2026-10-10 12:30', \
+            '' \
+        ]], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            formsLinkButtonElements('Update', '<function>'), \
+            {'text': ' | '}, \
+            formsLinkButtonElements('Delete', '<function>') \
+        ]}]] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzStockPage_message')
+
+
+async function testMarkowitzStockPage_error():
+    unittestMockAll({})
+    markowitzStockPage({'page': 'stock', 'symbol': 'XYZ'})
+    expected = [['systemFetch', ['getStock?symbol=XYZ']]]
+    arrayExtend(expected, testHeaderCalls('Stock', 'Stock', "#var.vPage='stocks'"))
+    arrayPush(expected, ['markdownPrint', ['**Error:** The stock could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStockPage_error')
+
+
+async function testMarkowitzStockPage_noSymbol():
+    unittestMockAll({})
+    markowitzStockPage({'page': 'stock'})
+    expected = testHeaderCalls('Stock', 'Stock', "#var.vPage='stocks'")
+    arrayPush(expected, ['markdownPrint', ['**Error:** The stock could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzStockPage_noSymbol')
+
+
+async function testMarkowitzStockPage_updateBinding():
+    args = {'page': 'stock', 'symbol': 'IBM'}
+    data = {'systemFetch': { \
+        'getStock?symbol=IBM': jsonStringify({'stock': arrayGet(testStocks, 0), 'prices': {'2026-07': 9}}), \
+        'updateStocks': jsonStringify({'results': [{'symbol': 'IBM', 'stock': arrayGet(testStocks, 0)}]}) \
+    }}
+    testVerifyClick(systemPartial(markowitzStockPage, args), 'Update', systemPartial(markowitzOnUpdateStock, args, 'IBM'), data)
+endfunction
+unittestRunTest('testMarkowitzStockPage_updateBinding')
+
+
+async function testMarkowitzStockPage_deleteBinding():
+    args = {'page': 'stock', 'symbol': 'IBM'}
+    data = {'systemFetch': { \
+        'getStock?symbol=IBM': jsonStringify({'stock': arrayGet(testStocks, 0), 'prices': {'2026-07': 9}}), \
+        'deleteStock': '{}' \
+    }}
+    testVerifyClick(systemPartial(markowitzStockPage, args), 'Delete', systemPartial(markowitzOnDeleteStock, args, 'IBM'), data)
+endfunction
+unittestRunTest('testMarkowitzStockPage_deleteBinding')
+
+
+async function testMarkowitzOnUpdateStock():
+    args = {'page': 'stock', 'symbol': 'IBM'}
+    data = {'systemFetch': { \
+        'getStock?symbol=IBM': jsonStringify({'stock': arrayGet(testStocks, 0), 'prices': {'2026-07': 9}}), \
+        'updateStocks': jsonStringify({'results': [{'symbol': 'IBM', 'stock': arrayGet(testStocks, 0)}]}) \
+    }}
+    unittestMockAll(data)
+    markowitzOnUpdateStock(args, 'IBM')
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['systemFetch', [{'url': 'updateStocks', 'body': '{"symbols":["IBM"]}'}]])
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(systemPartial(markowitzStockPage, args, 'Updated IBM.'), data))
+endfunction
+unittestRunTest('testMarkowitzOnUpdateStock')
+
+
+async function testMarkowitzOnDeleteStock():
+    unittestMockAll({'systemFetch': {'deleteStock': '{}'}})
+    markowitzOnDeleteStock({'page': 'stock', 'symbol': 'IBM'}, 'IBM')
+    unittestDeepEqual(unittestMockEnd(), [ \
+        ['systemFetch', [{'url': 'deleteStock', 'body': '{"symbol":"IBM"}'}]], \
+        ['windowSetLocation', ["#var.vPage='stocks'"]] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzOnDeleteStock')
+
+
+async function testMarkowitzOnDeleteStock_error():
+    args = {'page': 'stock', 'symbol': 'IBM'}
+    data = {'systemFetch': {'getStock?symbol=IBM': jsonStringify({'stock': arrayGet(testStocks, 0), 'prices': {'2026-07': 9}})}}
+    unittestMockAll(data)
+    markowitzOnDeleteStock(args, 'IBM')
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['systemFetch', [{'url': 'deleteStock', 'body': '{"symbol":"IBM"}'}]])
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(systemPartial(markowitzStockPage, args, 'The stock could not be deleted.'), data))
+endfunction
+unittestRunTest('testMarkowitzOnDeleteStock_error')

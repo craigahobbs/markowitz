@@ -1,0 +1,179 @@
+# The Markowitz application's groups and group pages
+
+include <args.bare>
+include <dataTable.bare>
+include <forms.bare>
+include <markdown.bare>
+include <schema.bare>
+include <url.bare>
+
+# The API types and utilities - shared with the backend
+include 'markowitzTypes.bare'
+include 'markowitzUtil.bare'
+
+# The common page helpers, and stock updates
+include 'markowitzCommon.bare'
+include 'markowitzStocks.bare'
+
+
+# The group form's text input IDs
+markowitzGroupNameInputID = 'markowitz-group-name'
+markowitzGroupSymbolsInputID = 'markowitz-group-symbols'
+
+
+#
+# Groups page
+#
+
+
+async function markowitzGroupsPage(args, form, message):
+    markowitzHeader('Groups')
+    response = markowitzFetch('getGroups')
+    if response == null:
+        markdownPrint('**Error:** The groups could not be loaded.')
+        return
+    endif
+    groups = objectGet(response, 'groups')
+    markowitzMessage(message)
+
+    # The groups table
+    names = []
+    if !arrayLength(groups):
+        markdownPrint('There are no groups.')
+    else:
+        data = []
+        for group in groups:
+            name = objectGet(group, 'name')
+            arrayPush(names, name)
+            arrayPush(data, { \
+                'Group': argsLink(markowitzArguments, name, {'page': 'group', 'group': name}, true), \
+                'Stocks': stringNew(arrayLength(objectGet(group, 'symbols'))) \
+            })
+        endfor
+        markdownPrint(dataTableMarkdown(data, { \
+            'fields': ['Group', 'Stocks'], \
+            'formats': {'Group': {'markdown': true}, 'Stocks': {'align': 'right'}} \
+        }))
+    endif
+
+    # The new group form
+    form = if(form != null, form, {'name': '', 'symbols': ''})
+    markdownPrint('', '## New Group', '')
+    elementModelRender([ \
+        {'html': 'p', 'elem': [ \
+            {'html': 'label', 'attr': {'for': markowitzGroupNameInputID}, 'elem': {'html': 'b', 'elem': {'text': 'Name'}}}, \
+            {'html': 'br'}, \
+            formsTextElements(markowitzGroupNameInputID, objectGet(form, 'name'), 40) \
+        ]}, \
+        {'html': 'p', 'elem': [ \
+            {'html': 'label', 'attr': {'for': markowitzGroupSymbolsInputID}, 'elem': {'html': 'b', 'elem': {'text': 'Stock symbols, separated by spaces or commas'}}}, \
+            {'html': 'br'}, \
+            formsTextElements(markowitzGroupSymbolsInputID, objectGet(form, 'symbols'), 80) \
+        ]}, \
+        {'html': 'p', 'elem': formsLinkButtonElements('Create Group', systemPartial(markowitzOnCreateGroup, args, names))} \
+    ])
+endfunction
+
+
+# Create a group
+async function markowitzOnCreateGroup(args, names):
+    form = {'name': documentInputValue(markowitzGroupNameInputID), 'symbols': documentInputValue(markowitzGroupSymbolsInputID)}
+    name = stringTrim(objectGet(form, 'name'))
+    request = markowitzGroupRequest(name, objectGet(form, 'symbols'))
+    if request == null:
+        markowitzGroupsPage(args, form, 'Enter a group name and one to one thousand stock symbols.')
+        return
+    elif arrayIndexOf(names, name) != -1:
+        markowitzGroupsPage(args, form, 'The group "' + name + '" exists.')
+        return
+    elif markowitzFetch('setGroup', request) == null:
+        markowitzGroupsPage(args, form, 'The group could not be created.')
+        return
+    endif
+    windowSetLocation(argsURL(markowitzArguments, {'page': 'group', 'group': name}, true))
+endfunction
+
+
+# Create a group request - null if invalid
+function markowitzGroupRequest(name, symbolsText):
+    request = {'name': name, 'symbols': markowitzSymbols(markowitzParseList(symbolsText))}
+    return if(!objectHas(schemaValidateEx(markowitzTypes, 'setGroup_input', request), 'error'), request)
+endfunction
+
+
+#
+# Group page
+#
+
+
+async function markowitzGroupPage(args, message):
+    name = objectGet(args, 'group')
+    response = if(name != null, markowitzFetch('getGroup?name=' + urlEncodeComponent(name)))
+    if response == null:
+        markowitzHeader('Group', {'page': 'groups'})
+        markdownPrint('**Error:** The group could not be loaded.')
+        return
+    endif
+    symbols = objectGet(objectGet(response, 'group'), 'symbols')
+    stocks = objectGet(response, 'stocks')
+
+    # The group's summary and actions
+    missing = markowitzMissingSymbols(symbols, stocks)
+    markowitzHeader(name, {'page': 'groups'})
+    markowitzMessage(message)
+    markdownPrint('- **Stocks:** ' + arrayLength(symbols))
+    if arrayLength(missing):
+        markdownPrint('- **Stocks without prices:** ' + markdownEscape(arrayJoin(missing, ', ')))
+    endif
+    markdownPrint('')
+    elementModelRender({'html': 'p', 'elem': [ \
+        formsLinkButtonElements('Update Stocks', systemPartial(markowitzOnUpdateGroupStocks, args, name, symbols)), \
+        {'text': ' | '}, \
+        formsLinkElements('New Run', argsURL(markowitzArguments, {'page': 'new', 'group': name}, true)), \
+        {'text': ' | '}, \
+        formsLinkButtonElements('Delete', systemPartial(markowitzOnDeleteGroup, args, name)) \
+    ]})
+
+    # The group's stock symbols form
+    markdownPrint('## Stock Symbols', '')
+    elementModelRender({'html': 'p', 'elem': [ \
+        formsTextElements(markowitzGroupSymbolsInputID, arrayJoin(symbols, ' '), 80), \
+        {'text': ' '}, \
+        formsLinkButtonElements('Save', systemPartial(markowitzOnSaveGroup, args, name)) \
+    ]})
+
+    # The stocks table
+    markdownPrint('## Stocks', '')
+    if !arrayLength(stocks):
+        markdownPrint('There are no stocks with prices.')
+        return
+    endif
+    markdownPrint(markowitzStocksTable(stocks))
+endfunction
+
+
+# Download and update a group's stocks
+async function markowitzOnUpdateGroupStocks(args, name, symbols):
+    markowitzUpdateStart(name, {'page': 'groups'}, symbols, systemPartial(markowitzGroupPage, args))
+endfunction
+
+
+# Save a group's stock symbols
+async function markowitzOnSaveGroup(args, name):
+    request = markowitzGroupRequest(name, documentInputValue(markowitzGroupSymbolsInputID))
+    if request == null:
+        markowitzGroupPage(args, 'Enter one to one thousand stock symbols.')
+        return
+    endif
+    markowitzGroupPage(args, if(markowitzFetch('setGroup', request) != null, 'Saved the group.', 'The group could not be saved.'))
+endfunction
+
+
+# Delete a group
+async function markowitzOnDeleteGroup(args, name):
+    if markowitzFetch('deleteGroup', {'name': name}) == null:
+        markowitzGroupPage(args, 'The group could not be deleted.')
+        return
+    endif
+    windowSetLocation(argsURL(markowitzArguments, {'page': 'groups'}, true))
+endfunction

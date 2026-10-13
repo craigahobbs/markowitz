@@ -85,7 +85,7 @@ lint-backend: $(DEFAULT_VENV_BUILD) backend/$(APP).bare frontend/$(APP)Types.bar
 
 .PHONY: lint-frontend
 lint-frontend: $(DEFAULT_VENV_BUILD) frontend/$(APP).bare frontend/$(APP)Types.bare
-	$(DEFAULT_VENV_BIN)/bare -x -m frontend/$(APP).bare test/frontend/test*.bare
+	$(DEFAULT_VENV_BIN)/bare -x -m frontend/*.bare test/frontend/test*.bare
 	$(DEFAULT_VENV_BIN)/bare -s -m test/frontend/runTests.bare
 
 

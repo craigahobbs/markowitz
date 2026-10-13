@@ -1,0 +1,279 @@
+# The Markowitz application's stocks and stock pages, and stock updates
+
+include <args.bare>
+include <dataLineChart.bare>
+include <forms.bare>
+include <markdown.bare>
+include <schema.bare>
+include <url.bare>
+
+# The API types and utilities - shared with the backend
+include 'markowitzTypes.bare'
+include 'markowitzUtil.bare'
+
+# The common page helpers
+include 'markowitzCommon.bare'
+
+
+# The stock symbols text input ID
+markowitzSymbolsInputID = 'markowitz-symbols'
+
+# The number of updated (or failed) stocks listed by name in an update's message
+markowitzUpdatedListMax = 10
+
+# The number of stocks downloaded by each request of a stock update
+markowitzUpdateChunkSize = 10
+
+
+#
+# Stocks page
+#
+
+
+async function markowitzStocksPage(args, message):
+    markowitzHeader('Stocks')
+    response = markowitzFetch('getStocks')
+    groupsResponse = markowitzFetch('getGroups')
+    if response == null || groupsResponse == null:
+        markdownPrint('**Error:** The stocks could not be loaded.')
+        return
+    endif
+    stocks = objectGet(response, 'stocks')
+    groups = objectGet(groupsResponse, 'groups')
+    markowitzMessage(message)
+
+    # The stock update controls
+    markdownPrint( \
+        'Download stocks\' monthly prices from Yahoo Finance. Enter stock symbols, separated by spaces or commas, to', \
+        'add or update them.', \
+        '' \
+    )
+    controls = [ \
+        formsTextElements(markowitzSymbolsInputID, '', 40), \
+        {'text': ' '}, \
+        formsLinkButtonElements('Add / Update', systemPartial(markowitzOnUpdateStocks, args, null)) \
+    ]
+    if arrayLength(stocks):
+        arrayPush(controls, {'text': ' | '}, \
+            formsLinkButtonElements('Update All', systemPartial(markowitzOnUpdateStocks, args, markowitzSymbolList(stocks))))
+    endif
+    elementModelRender({'html': 'p', 'elem': controls})
+
+    # The group update controls
+    if arrayLength(groups):
+        groupControls = [{'html': 'b', 'elem': {'text': 'Update a group:'}}]
+        for group in groups:
+            groupName = objectGet(group, 'name')
+            arrayPush(groupControls, \
+                {'text': if(arrayLength(groupControls) > 1, ' | ', ' ')}, \
+                formsLinkButtonElements(groupName, systemPartial(markowitzOnUpdateStocks, args, objectGet(group, 'symbols'))) \
+            )
+        endfor
+        elementModelRender({'html': 'p', 'elem': groupControls})
+    endif
+
+    # The stocks table
+    if !arrayLength(stocks):
+        markdownPrint('There are no stocks.')
+        return
+    endif
+    markdownPrint(markowitzStocksTable(stocks))
+endfunction
+
+
+# Download and update stocks - the stock symbols input's stocks if the symbols are null
+async function markowitzOnUpdateStocks(args, symbols):
+    if symbols == null:
+        symbols = markowitzParseList(documentInputValue(markowitzSymbolsInputID))
+        if objectHas(schemaValidateEx(markowitzTypes, 'updateStocks_input', {'symbols': symbols}), 'error'):
+            markowitzStocksPage(args, 'Enter one to fifty stock symbols.')
+            return
+        endif
+    endif
+    markowitzUpdateStart('Stocks', null, markowitzSymbols(symbols), systemPartial(markowitzStocksPage, args))
+endfunction
+
+
+# Download and update stocks with one request - returns the result message
+async function markowitzUpdateStocks(request):
+    response = markowitzFetch('updateStocks', request)
+    if response == null:
+        return 'The stock update failed.'
+    endif
+    updated = []
+    failed = []
+    markowitzUpdateResults(objectGet(response, 'results'), updated, failed)
+    return markowitzUpdateMessage(updated, failed, 0)
+endfunction
+
+
+# Add an update response's results to the updated and failed stocks
+function markowitzUpdateResults(results, updated, failed):
+    for result in results:
+        symbol = objectGet(result, 'symbol')
+        error = objectGet(result, 'error')
+        if error != null:
+            arrayPush(failed, symbol + ' (' + error + ')')
+        else:
+            arrayPush(updated, symbol)
+        endif
+    endfor
+endfunction
+
+
+# A stock update's result message - the updated stocks, the failed stocks, and the count of stocks not updated (the
+# update was stopped)
+function markowitzUpdateMessage(updated, failed, stoppedCount):
+    messages = []
+    if arrayLength(updated) > markowitzUpdatedListMax:
+        arrayPush(messages, 'Updated ' + arrayLength(updated) + ' stocks.')
+    elif arrayLength(updated):
+        arrayPush(messages, 'Updated ' + arrayJoin(updated, ', ') + '.')
+    endif
+    if arrayLength(failed) > markowitzUpdatedListMax:
+        arrayPush(messages, 'Failed ' + arrayLength(failed) + ' stocks: ' + \
+            arrayJoin(arraySlice(failed, 0, markowitzUpdatedListMax), ', ') + ', ...')
+    elif arrayLength(failed):
+        arrayPush(messages, 'Failed ' + arrayJoin(failed, ', ') + '.')
+    endif
+    if stoppedCount:
+        arrayPush(messages, 'Stopped - ' + stoppedCount + ' stocks were not updated.')
+    endif
+    return if(arrayLength(messages), arrayJoin(messages, ' '), 'There are no stocks to update.')
+endfunction
+
+
+#
+# Stock updates - a stock update downloads its stocks a chunk at a time, each chunk in its own window timeout, so that
+# its progress renders after each chunk
+#
+
+
+# Start a stock update - render its progress page (the title and "Back" link URL arguments), update the stocks a chunk
+# at a time, and then render the page with the update's message ("pageFn(message)")
+function markowitzUpdateStart(title, back, symbols, pageFn):
+    update = {'title': title, 'back': back, 'symbols': symbols, 'count': 0, 'updated': [], 'failed': [], 'pageFn': pageFn}
+    markowitzUpdateProgress(update)
+endfunction
+
+
+# Render a stock update's progress, and schedule its next chunk
+function markowitzUpdateProgress(update):
+    count = objectGet(update, 'count')
+    total = arrayLength(objectGet(update, 'symbols'))
+    failedCount = arrayLength(objectGet(update, 'failed'))
+    markowitzHeader(objectGet(update, 'title'), objectGet(update, 'back'))
+    markdownPrint( \
+        '**Updating stocks...** ' + count + ' of ' + total + ' (' + numberToFixed(100 * count / total, 0) + '%)' + \
+            if(failedCount, ', ' + failedCount + ' failed', ''), \
+        '' \
+    )
+    elementModelRender(markowitzProgressElements(count, total, systemPartial(markowitzOnUpdateStop, update)))
+    windowSetTimeout(systemPartial(markowitzOnUpdateChunk, update), 0)
+endfunction
+
+
+# Download and update a stock update's next chunk of stocks
+async function markowitzOnUpdateChunk(update):
+    if objectGet(update, 'stopped'):
+        return
+    endif
+    symbols = objectGet(update, 'symbols')
+    count = objectGet(update, 'count')
+    chunk = arraySlice(symbols, count, mathMin(count + markowitzUpdateChunkSize, arrayLength(symbols)))
+    response = markowitzFetch('updateStocks', {'symbols': chunk})
+    if response == null:
+        for symbol in chunk:
+            arrayPush(objectGet(update, 'failed'), symbol + ' (The stock update failed)')
+        endfor
+    else:
+        markowitzUpdateResults(objectGet(response, 'results'), objectGet(update, 'updated'), objectGet(update, 'failed'))
+    endif
+    if objectGet(update, 'stopped'):
+        return
+    endif
+
+    # Render the progress and schedule the next chunk - or, if done, render the page
+    count = count + arrayLength(chunk)
+    objectSet(update, 'count', count)
+    if count < arrayLength(symbols):
+        markowitzUpdateProgress(update)
+        return
+    endif
+    pageFn = objectGet(update, 'pageFn')
+    pageFn(markowitzUpdateMessage(objectGet(update, 'updated'), objectGet(update, 'failed'), 0))
+endfunction
+
+
+# Stop a stock update - render the page with the update's message. The update is marked stopped, so that the chunk
+# being downloaded (MarkdownUp doesn't queue a click behind a window timeout's callback), or the next chunk's
+# already-queued window timeout, renders and schedules nothing.
+async function markowitzOnUpdateStop(update):
+    objectSet(update, 'stopped', true)
+    stoppedCount = arrayLength(objectGet(update, 'symbols')) - objectGet(update, 'count')
+    pageFn = objectGet(update, 'pageFn')
+    pageFn(markowitzUpdateMessage(objectGet(update, 'updated'), objectGet(update, 'failed'), stoppedCount))
+endfunction
+
+
+#
+# Stock page
+#
+
+
+async function markowitzStockPage(args, message):
+    symbol = objectGet(args, 'symbol')
+    response = if(symbol != null, markowitzFetch('getStock?symbol=' + urlEncodeComponent(symbol)))
+    if response == null:
+        markowitzHeader('Stock', {'page': 'stocks'})
+        markdownPrint('**Error:** The stock could not be loaded.')
+        return
+    endif
+    stock = objectGet(response, 'stock')
+    stockSymbol = objectGet(stock, 'symbol')
+    prices = objectGet(response, 'prices')
+
+    # The stock's summary and actions
+    markowitzHeader(stockSymbol, {'page': 'stocks'})
+    markowitzMessage(message)
+    markdownPrint( \
+        '- **Name:** ' + markdownEscape(objectGet(stock, 'name', '')), \
+        '- **Currency:** ' + markdownEscape(objectGet(stock, 'currency', '')), \
+        '- **Months:** ' + objectGet(stock, 'monthCount') + ', ' + objectGet(stock, 'firstMonth') + ' to ' + \
+            objectGet(stock, 'lastMonth'), \
+        '- **Updated:** ' + markowitzDatetimeText(objectGet(stock, 'updated')), \
+        '' \
+    )
+    elementModelRender({'html': 'p', 'elem': [ \
+        formsLinkButtonElements('Update', systemPartial(markowitzOnUpdateStock, args, stockSymbol)), \
+        {'text': ' | '}, \
+        formsLinkButtonElements('Delete', systemPartial(markowitzOnDeleteStock, args, stockSymbol)) \
+    ]})
+
+    # The monthly price chart
+    data = []
+    for month in arraySort(objectKeys(prices)):
+        monthIndex = markowitzMonthIndex(month)
+        arrayPush(data, { \
+            'Month': datetimeNew(mathFloor(monthIndex / 12), monthIndex % 12 + 1, 1), \
+            'Price': objectGet(prices, month) \
+        })
+    endfor
+    dataLineChart(data, {'title': 'Monthly Price (adjusted)', 'x': 'Month', 'y': ['Price'], 'yScale': 'log'})
+endfunction
+
+
+# Download and update a stock
+async function markowitzOnUpdateStock(args, symbol):
+    markowitzStockPage(args, markowitzUpdateStocks({'symbols': [symbol]}))
+endfunction
+
+
+# Delete a stock
+async function markowitzOnDeleteStock(args, symbol):
+    if markowitzFetch('deleteStock', {'symbol': symbol}) == null:
+        markowitzStockPage(args, 'The stock could not be deleted.')
+        return
+    endif
+    windowSetLocation(argsURL(markowitzArguments, {'page': 'stocks'}, true))
+endfunction

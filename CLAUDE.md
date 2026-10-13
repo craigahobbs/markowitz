@@ -17,7 +17,17 @@ API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
   - `backend/markowitzCouch.bare` - the CouchDB database URL, headers, and request helpers (`markowitzDB*`)
   - `backend/markowitzYahoo.bare` - the Yahoo Finance stock price download (`markowitzYahooDownload`)
 - `frontend/markowitz.bare` - the frontend MarkdownUp application, whose main function `markowitzMain()` is
-  called from `frontend/markowitz.md`
+  called from `frontend/markowitz.md`. It includes the application's pages:
+  - `frontend/markowitzCommon.bare` - the URL arguments and the common page helpers (header, `markowitzFetch`,
+    tables, and formatting)
+  - `frontend/markowitzRuns.bare` - the runs and run pages, and a running run's progress
+  - `frontend/markowitzNewRun.bare` - the new run page
+  - `frontend/markowitzStocks.bare` - the stocks and stock pages, and stock updates
+  - `frontend/markowitzGroups.bare` - the groups and group pages
+
+  Each page file includes the files it calls, so it lints standalone - the common helpers, and the run page
+  (`markowitzNewRun.bare`) or stock updates (`markowitzGroups.bare`). Keep the calls one-way so the includes don't
+  form a cycle - the runs and stocks files never call the new run and groups files.
 - `frontend/markowitzTypes.bare` - the API's Schema Markdown types, `markowitzTypes`, shared by the backend and
   frontend
 - `frontend/markowitzUtil.bare` - the month, stock symbol, and run stock selection (`markowitzRunSelect`) helpers,
@@ -39,8 +49,8 @@ API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
   `/<file>`, and `/` for `frontend/index.html`) and the MarkdownUp application
   (downloaded to `build/markdown-up/` by `make run`, at `/markdown-up/<file>`). Configuration and secrets (e.g.
   database credentials) come from environment variables - read them in `wsgi.py` and add them to its `globals_`
-- `test/` - the unit tests, `test/backend/` (a test file for each backend file, and the shared
-  `testMarkowitzHelpers.bare` fixtures) and `test/frontend/`, with a
+- `test/` - the unit tests, `test/backend/` and `test/frontend/` - a test file for each source file, and the
+  shared `testMarkowitzHelpers.bare` fixtures - with a
   `runTests.bare` runner and an `index.html` to run them in a browser. The pages load MarkdownUp from
   `build/markdown-up/` (downloaded by `make run`), so serve the project root with a static file server (e.g.
   `python3 -m http.server`) and open `/test/backend/` or `/test/frontend/`.

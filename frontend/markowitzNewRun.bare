@@ -1,0 +1,434 @@
+# The Markowitz application's new run page
+
+include <args.bare>
+include <forms.bare>
+include <markdown.bare>
+include <schema.bare>
+include <url.bare>
+
+# The API types and utilities - shared with the backend
+include 'markowitzTypes.bare'
+include 'markowitzUtil.bare'
+
+# The common page helpers, and the run page
+include 'markowitzCommon.bare'
+include 'markowitzRuns.bare'
+
+
+# The new run form's text fields - [name, label, input size, if true, a change updates the excluded stocks] - and
+# default values (with the selected group)
+markowitzRunFormFields = [ \
+    ['name', 'Name', 40, false], \
+    ['endMonth', 'End month of the analysis period, "YYYY-MM" (blank for the latest)', 10, true], \
+    ['months', 'Months in the analysis period', 5, true], \
+    ['horizon', 'Months in the projection', 5, false], \
+    ['targets', 'Target annual returns, in percent, separated by spaces or commas', 40, false], \
+    ['exclude', 'Excluded stocks, separated by spaces or commas - updated when the group, end month, or months change', 80, false] \
+]
+markowitzRunFormDefault = { \
+    'name': '', \
+    'group': '', \
+    'endMonth': '', \
+    'months': '36', \
+    'horizon': '3', \
+    'targets': '5, 10, 15, 20, 25', \
+    'exclude': '' \
+}
+
+# The minimum and maximum number of months in a run's analysis period
+markowitzRunMonthsMin = 6
+markowitzRunMonthsMax = 600
+
+
+# The new run page - the handlers re-render it with the stocks and groups
+async function markowitzNewRunPage(args, form, message, selecting, stocks, groups):
+    if stocks == null || groups == null:
+        stocksResponse = markowitzFetch('getStocks')
+        groupsResponse = markowitzFetch('getGroups')
+        stocks = if(stocksResponse != null, objectGet(stocksResponse, 'stocks'))
+        groups = if(groupsResponse != null, objectGet(groupsResponse, 'groups'))
+    endif
+
+    # Start with the default form (and the group argument's months and excluded stocks), or a prior run's
+    id = objectGet(args, 'id')
+    if form == null:
+        form = objectCopy(markowitzRunFormDefault)
+        runResponse = if(id != null, markowitzFetch('getRun?id=' + urlEncodeComponent(id)))
+        if runResponse != null:
+            run = objectGet(runResponse, 'run')
+            targets = []
+            for target in objectGet(run, 'targets'):
+                arrayPush(targets, stringNew(target))
+            endfor
+            objectAssign(form, { \
+                'name': objectGet(run, 'name'), \
+                'group': objectGet(run, 'group', ''), \
+                'endMonth': objectGet(run, 'endMonth'), \
+                'months': stringNew(objectGet(run, 'months')), \
+                'horizon': stringNew(objectGet(run, 'horizon')), \
+                'targets': arrayJoin(targets, ', '), \
+                'exclude': arrayJoin(markowitzSymbolList(objectGet(run, 'excluded', [])), ' ') \
+            })
+        elif objectHas(args, 'group') && stocks != null && groups != null:
+            objectSet(form, 'group', objectGet(args, 'group'))
+            markowitzRunFormUpdate(form, stocks, groups, true)
+        endif
+    endif
+
+    # Back to the run (run again), the group, or the runs
+    groupArg = objectGet(args, 'group')
+    back = if(id != null, {'page': 'run', 'id': id}, if(groupArg != null, {'page': 'group', 'group': groupArg}, {'page': 'runs'}))
+    markowitzHeader('New Run', back)
+    if stocks == null || groups == null:
+        markdownPrint('**Error:** The stocks could not be loaded.')
+        return
+    endif
+
+    # The selected stock group - none if it doesn't exist
+    group = markowitzGroupFind(groups, objectGet(form, 'group'))
+    groupName = if(group != null, objectGet(group, 'name'), '')
+    groupElements = [{'html': 'b', 'elem': {'text': 'Stock group'}}, {'html': 'br'}]
+    if group != null:
+        arrayPush(groupElements, {'text': groupName + ' (' + arrayLength(objectGet(group, 'symbols')) + ' stocks) '})
+    endif
+    arrayPush(groupElements, formsLinkButtonElements( \
+        if(group != null, 'Change', 'Select'), systemPartial(markowitzOnSelectGroup, args, groupName, !selecting, stocks, groups) \
+    ))
+    elementModelRender({'html': 'p', 'elem': groupElements})
+
+    # The stock group selection list
+    if selecting:
+        if !arrayLength(groups):
+            markdownPrint('There are no groups. ' + argsLink(markowitzArguments, 'Create a group', {'page': 'groups'}, true) + '.', '')
+        else:
+            groupItems = []
+            for groupItem in groups:
+                itemName = objectGet(groupItem, 'name')
+                arrayPush(groupItems, {'html': 'li', 'elem': [ \
+                    formsLinkButtonElements(itemName, systemPartial(markowitzOnSetGroup, args, itemName, stocks, groups)), \
+                    {'text': ' (' + arrayLength(objectGet(groupItem, 'symbols')) + ' stocks)'} \
+                ]})
+            endfor
+            elementModelRender({'html': 'ul', 'elem': groupItems})
+        endif
+    endif
+
+    # The stock group's stocks without prices, and its minimum analysis period
+    if group != null:
+        missingText = markowitzGroupMissingText(group, stocks)
+        if missingText != null:
+            markdownPrint(missingText, '')
+        endif
+        markdownPrint(markowitzGroupMinimumText(group, stocks, markowitzMonthIndex(stringTrim(objectGet(form, 'endMonth')))), '')
+    endif
+
+    # The run form - a change to the analysis period updates the excluded stocks
+    onPeriodChange = if(group != null, systemPartial(markowitzOnRunPeriodChange, args, groupName, stocks, groups))
+    for field in markowitzRunFormFields:
+        name = arrayGet(field, 0)
+        inputID = 'markowitz-' + name
+        inputElements = formsTextElements(inputID, objectGet(form, name), arrayGet(field, 2))
+        if arrayGet(field, 3) && onPeriodChange != null:
+            objectSet(inputElements, 'callback', {'change': onPeriodChange})
+        endif
+        elementModelRender({'html': 'p', 'elem': [ \
+            {'html': 'label', 'attr': {'for': inputID}, 'elem': {'html': 'b', 'elem': {'text': arrayGet(field, 1)}}}, \
+            {'html': 'br'}, \
+            inputElements \
+        ]})
+    endfor
+
+    # The message (e.g. from "Start Run"), and the Start Run button
+    markowitzMessage(message)
+    elementModelRender({'html': 'p', 'elem': formsLinkButtonElements( \
+        'Start Run', systemPartial(markowitzOnStartRun, args, stocks, groups, groupName) \
+    )})
+    markdownPrint( \
+        'Stocks without a price for every month of the analysis period are excluded from the run. A run needs at least', \
+        'as many months as stocks.', \
+        '' \
+    )
+
+    # The selected group's stocks
+    if group != null:
+        groupSymbols = objectGet(group, 'symbols')
+        groupStocks = []
+        for stock in stocks:
+            if arrayIndexOf(groupSymbols, objectGet(stock, 'symbol')) != -1:
+                arrayPush(groupStocks, stock)
+            endif
+        endfor
+        markdownPrint('## ' + markdownEscape(groupName) + ' Stocks', '')
+        if !arrayLength(groupStocks):
+            markdownPrint('There are no stocks with prices. ' + \
+                argsLink(markowitzArguments, 'Update the stocks', {'page': 'group', 'group': groupName}, true) + '.')
+            return
+        endif
+        markdownPrint(markowitzStocksTable(groupStocks))
+    endif
+endfunction
+
+
+# Find a stock group by name - null if not found
+function markowitzGroupFind(groups, name):
+    for group in groups:
+        if objectGet(group, 'name') == name:
+            return group
+        endif
+    endfor
+    return null
+endfunction
+
+
+# Compute a run's minimum analysis period months - the fewest months for which the stocks with a price for every month
+# are no more than the months (more months exclude more stocks). The end month index defaults to the last month for
+# which every stock has a price. Returns {"months": months, "count": stockCount} - the months are null if more than
+# the maximum, and the count is the stocks with a price for every month.
+function markowitzRunMinimumMonths(symbols, stockMap, endIndex):
+    endIndex = if(endIndex != null, endIndex, markowitzRunEndIndex(symbols, stockMap))
+
+    # The number of months of prices each stock has through the end month, in increasing order
+    priceMonths = []
+    for symbol in symbols:
+        stock = objectGet(stockMap, symbol)
+        if stock != null && markowitzMonthIndex(objectGet(stock, 'lastMonth')) >= endIndex:
+            arrayPush(priceMonths, endIndex - markowitzMonthIndex(objectGet(stock, 'firstMonth')))
+        endif
+    endfor
+    arraySort(priceMonths)
+
+    # Find the fewest months with no more stocks than months
+    ixPriceMonths = 0
+    months = markowitzRunMonthsMin
+    while months <= markowitzRunMonthsMax:
+        while ixPriceMonths < arrayLength(priceMonths) && arrayGet(priceMonths, ixPriceMonths) < months:
+            ixPriceMonths = ixPriceMonths + 1
+        endwhile
+        count = arrayLength(priceMonths) - ixPriceMonths
+        if count <= months:
+            return {'months': months, 'count': count}
+        endif
+        months = months + 1
+    endwhile
+    return {'months': null, 'count': count}
+endfunction
+
+
+# The stock group's stocks without prices warning Markdown text - null if every stock has prices
+function markowitzGroupMissingText(group, stocks):
+    symbols = objectGet(group, 'symbols')
+    missingCount = arrayLength(markowitzMissingSymbols(symbols, stocks))
+    if !missingCount:
+        return null
+    endif
+    return '**Warning:** ' + missingCount + ' of the group\'s ' + arrayLength(symbols) + ' stocks have no prices - ' + \
+        argsLink(markowitzArguments, 'update the stocks', {'page': 'group', 'group': objectGet(group, 'name')}, true) + \
+        ' for an accurate minimum analysis period.'
+endfunction
+
+
+# The stock group's minimum analysis period Markdown text
+function markowitzGroupMinimumText(group, stocks, endIndex):
+    symbols = objectGet(group, 'symbols')
+    minimum = markowitzRunMinimumMonths(symbols, markowitzStockMap(stocks), endIndex)
+    months = objectGet(minimum, 'months')
+    count = objectGet(minimum, 'count')
+    if months == null:
+        return '**Note:** This group can\'t be run - ' + count + ' of its ' + arrayLength(symbols) + ' stocks have prices ' + \
+            'for ' + markowitzRunMonthsMax + ' months (the most a run can have), and a run can\'t have more stocks than ' + \
+            'months. Exclude at least ' + (count - markowitzRunMonthsMax) + ' more stocks to run it.'
+    elif count < 2:
+        return '**Note:** Fewer than two of the group\'s stocks have prices - ' + \
+            argsLink(markowitzArguments, 'update the stocks', {'page': 'group', 'group': objectGet(group, 'name')}, true) + '.'
+    endif
+    return '**Minimum analysis period:** ' + months + ' months - a run can\'t have more stocks than months, and ' + \
+        count + ' of the group\'s ' + arrayLength(symbols) + ' stocks have prices for ' + months + ' months.'
+endfunction
+
+
+# Update a run form's excluded stocks (the group's stocks without a price for every month of the analysis period), in
+# place. If "selected" is true (the group was selected), also set the months to the group's minimum, and an empty name
+# (or another group's name) to the group's name.
+function markowitzRunFormUpdate(form, stocks, groups, selected):
+    group = markowitzGroupFind(groups, objectGet(form, 'group'))
+    if group == null:
+        return
+    endif
+    symbols = objectGet(group, 'symbols')
+    stockMap = markowitzStockMap(stocks)
+    endIndex = markowitzMonthIndex(stringTrim(objectGet(form, 'endMonth')))
+    months = numberParseInt(objectGet(form, 'months'))
+
+    # The selected group's name and minimum months
+    if selected:
+        name = stringTrim(objectGet(form, 'name'))
+        if name == '' || markowitzGroupFind(groups, name) != null:
+            objectSet(form, 'name', objectGet(group, 'name'))
+        endif
+        months = objectGet(markowitzRunMinimumMonths(symbols, stockMap, endIndex), 'months')
+        months = if(months != null, months, markowitzRunMonthsMax)
+        objectSet(form, 'months', stringNew(months))
+    endif
+
+    # Exclude the stocks without a price for every month of the analysis period
+    if months != null:
+        excluded = objectGet(markowitzRunSelect(symbols, stockMap, endIndex, months), 'excluded')
+        objectSet(form, 'exclude', arrayJoin(markowitzSymbolList(excluded), ' '))
+    endif
+endfunction
+
+
+# Read the run form's inputs - the selected group isn't an input
+function markowitzRunFormInputs(group):
+    form = {'group': group}
+    for field in markowitzRunFormFields:
+        name = arrayGet(field, 0)
+        objectSet(form, name, documentInputValue('markowitz-' + name))
+    endfor
+    return form
+endfunction
+
+
+# Show or hide the stock group selection list
+async function markowitzOnSelectGroup(args, group, selecting, stocks, groups):
+    markowitzNewRunPage(args, markowitzRunFormInputs(group), null, selecting, stocks, groups)
+endfunction
+
+
+# Select a stock group - set the name and the months to the group's, and update the excluded stocks
+async function markowitzOnSetGroup(args, group, stocks, groups):
+    form = markowitzRunFormInputs(group)
+    markowitzRunFormUpdate(form, stocks, groups, true)
+    markowitzNewRunPage(args, form, null, false, stocks, groups)
+endfunction
+
+
+# The analysis period changed - update the excluded stocks
+async function markowitzOnRunPeriodChange(args, group, stocks, groups):
+    form = markowitzRunFormInputs(group)
+    markowitzRunFormUpdate(form, stocks, groups, false)
+    markowitzNewRunPage(args, form, null, false, stocks, groups)
+endfunction
+
+
+# Start a run
+async function markowitzOnStartRun(args, stocks, groups, group):
+    form = markowitzRunFormInputs(group)
+
+    # Create the request - if stocks not excluded don't have prices for the analysis period, add them to the excluded
+    # stocks and start the run on the next click
+    requestResult = markowitzRunRequest(form, stocks, groups)
+    if objectHas(requestResult, 'missing'):
+        exclude = markowitzParseList(objectGet(form, 'exclude'))
+        arrayExtend(exclude, objectGet(requestResult, 'missing'))
+        objectSet(form, 'exclude', arrayJoin(markowitzSymbols(exclude), ' '))
+        markowitzNewRunPage(args, form, 'Updated the excluded stocks - ' + arrayLength(objectGet(requestResult, 'missing')) + \
+            ' of the group\'s stocks don\'t have prices for the analysis period. Click "Start Run" again to start the run.', \
+            false, stocks, groups)
+        return
+    elif objectHas(requestResult, 'error'):
+        markowitzNewRunPage(args, form, objectGet(requestResult, 'error'), false, stocks, groups)
+        return
+    endif
+
+    # Render the running run's page, and start the run in a window timeout so the page renders first
+    markowitzHeader('New Run', null)
+    markdownPrint( \
+        '**Running "' + markdownEscape(objectGet(form, 'name')) + '"...** A run of many stocks can take a minute.', \
+        '' \
+    )
+    windowSetTimeout(systemPartial(markowitzOnStartRunTimeout, args, form, objectGet(requestResult, 'request'), stocks, groups), 0)
+endfunction
+
+
+# Start a run - the run's page is rendered when it's done
+async function markowitzOnStartRunTimeout(args, form, request, stocks, groups):
+    response = markowitzFetch('createRun', request)
+    if response == null:
+        markowitzNewRunPage(args, form, 'The run failed.', false, stocks, groups)
+        return
+    endif
+
+    # Compute the run's portfolios
+    markowitzRunProgress({ \
+        'args': args, \
+        'id': objectGet(response, 'id'), \
+        'name': objectGet(request, 'name'), \
+        'count': 0, \
+        'total': arrayLength(objectGet(request, 'targets')) \
+    })
+endfunction
+
+
+# Create a run request from the run form - returns {"request": request}, {"error": message}, or {"missing": symbols}
+# if stocks not excluded don't have prices for the analysis period. The run's stocks are checked here since the
+# browser can't read the API's error response.
+function markowitzRunRequest(form, stocks, groups):
+    # Parse the form
+    groupName = objectGet(form, 'group')
+    if groupName == '':
+        return {'error': 'Select a stock group.'}
+    endif
+    targets = []
+    for target in markowitzParseList(objectGet(form, 'targets')):
+        arrayPush(targets, numberParseFloat(target))
+    endfor
+    request = { \
+        'name': stringTrim(objectGet(form, 'name')), \
+        'group': groupName, \
+        'months': numberParseInt(objectGet(form, 'months')), \
+        'horizon': numberParseInt(objectGet(form, 'horizon')), \
+        'targets': targets \
+    }
+    exclude = markowitzSymbols(markowitzParseList(objectGet(form, 'exclude')))
+    if arrayLength(exclude):
+        objectSet(request, 'exclude', exclude)
+    endif
+    endMonth = stringTrim(objectGet(form, 'endMonth'))
+    if endMonth != '':
+        objectSet(request, 'endMonth', endMonth)
+    endif
+
+    # Validate the request
+    validated = schemaValidateEx(markowitzTypes, 'createRun_input', request)
+    if objectHas(validated, 'error'):
+        fieldName = arrayGet(stringSplit(objectGet(validated, 'memberFqn'), '.'), 0)
+        label = fieldName
+        for field in markowitzRunFormFields:
+            label = if(arrayGet(field, 0) == fieldName, arrayGet(field, 1), label)
+        endfor
+        return {'error': 'Invalid "' + label + '" value.'}
+    endif
+    endIndex = if(endMonth != '', markowitzMonthIndex(endMonth))
+    if endMonth != '' && endIndex == null:
+        return {'error': 'Invalid end month "' + endMonth + '" - use "YYYY-MM".'}
+    endif
+
+    # Check the run's stocks - the stocks not excluded must have prices for the analysis period
+    group = markowitzGroupFind(groups, groupName)
+    if group == null:
+        return {'error': 'Unknown stock group "' + groupName + '".'}
+    endif
+    months = objectGet(request, 'months')
+    selection = markowitzRunSelect(objectGet(group, 'symbols'), markowitzStockMap(stocks), endIndex, months, exclude)
+    missing = []
+    for exclusion in objectGet(selection, 'excluded'):
+        symbol = objectGet(exclusion, 'symbol')
+        if arrayIndexOf(exclude, symbol) == -1:
+            arrayPush(missing, symbol)
+        endif
+    endfor
+    if arrayLength(missing):
+        return {'missing': missing}
+    endif
+    runSymbols = objectGet(selection, 'symbols')
+    if arrayLength(runSymbols) < 2:
+        return {'error': 'Fewer than two of the group\'s stocks have prices for the analysis period - update the group\'s stocks.'}
+    endif
+    if arrayLength(runSymbols) > months:
+        return {'error': 'There are more of the group\'s stocks with prices for the analysis period (' + arrayLength(runSymbols) + \
+            ') than months (' + months + ') - increase the months in the analysis period, or exclude stocks.'}
+    endif
+
+    return {'request': request}
+endfunction

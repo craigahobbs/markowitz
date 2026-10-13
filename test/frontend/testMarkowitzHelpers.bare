@@ -1,5 +1,7 @@
+include <forms.bare>
 include <unittest.bare>
 include <unittestMock.bare>
+include '../../frontend/markowitz.bare'
 
 
 # Find the click callback of the control with the text
@@ -70,4 +72,164 @@ endfunction
 function testStoppingFetch(stoppable, response):
     objectSet(stoppable, 'stopped', true)
     return response
+endfunction
+
+
+# The menu line
+testMenu = "[Runs](#var=) | [New Run](#var.vPage='new') | [Stocks](#var.vPage='stocks') | [Groups](#var.vPage='groups') | " + \
+    '[API Documentation](doc/)'
+
+
+# A local time, and its display text
+testCreated = datetimeISOFormat(datetimeNew(2026, 10, 10, 12, 30))
+testCreatedText = '2026-10-10 12:30'
+
+
+# The test stocks
+testStocks = [ \
+    { \
+        'symbol': 'IBM', 'name': 'International Business Machines', 'currency': 'USD', 'firstMonth': '1962-01', \
+        'lastMonth': '2026-09', 'monthCount': 777, 'updated': testCreated \
+    }, \
+    {'symbol': 'KO', 'firstMonth': '1985-01', 'lastMonth': '2026-09', 'monthCount': 501, 'updated': testCreated} \
+]
+testStocksTable = [ \
+    '| Stock                                       | Name                            | First Month | Last Month | Months | Updated          |', \
+    '|---------------------------------------------|---------------------------------|-------------|------------|-------:|------------------|', \
+    '| [IBM](#var.vPage=\'stock\'&var.vSymbol=\'IBM\') | International Business Machines | 1962-01     | 2026-09    |    777 | 2026-10-10 12:30 |', \
+    '| [KO](#var.vPage=\'stock\'&var.vSymbol=\'KO\')   |                                 | 1985-01     | 2026-09    |    501 | 2026-10-10 12:30 |' \
+]
+
+
+# The test stock groups
+testGroups = [ \
+    {'name': 'Dow 30', 'symbols': ['IBM', 'KO']}, \
+    {'name': 'S&P 100', 'symbols': ['IBM', 'KO', 'MSFT']} \
+]
+
+
+# The test run
+testRun = { \
+    'id': 'r1', \
+    'name': 'Blue <Chips>', \
+    'created': testCreated, \
+    'symbols': ['A', 'B', 'C', 'D'], \
+    'endMonth': '2023-01', \
+    'months': 36, \
+    'horizon': 3, \
+    'targets': [6.17, 19.56, 151.8], \
+    'stocks': [ \
+        {'symbol': 'A', 'expectedReturn': 31.24, 'variance': 23.04, 'realizedReturn': 35.9}, \
+        {'symbol': 'B', 'expectedReturn': -19.9, 'variance': 30.25, 'realizedReturn': 77.9}, \
+        {'symbol': 'C', 'expectedReturn': 11.6, 'variance': 24.01}, \
+        {'symbol': 'D', 'expectedReturn': -23, 'variance': 30.25, 'realizedReturn': 118.5} \
+    ], \
+    'portfolios': [ \
+        { \
+            'target': 6.17, 'solved': true, \
+            'allocations': [ \
+                {'symbol': 'A', 'weight': 0.3959}, {'symbol': 'B', 'weight': 0.2288}, \
+                {'symbol': 'C', 'weight': 0.2674}, {'symbol': 'D', 'weight': 0.1079} \
+            ], \
+            'deleted': [], 'variance': 6.25, 'realizedReturn': 67.9 \
+        }, \
+        { \
+            'target': 19.56, 'solved': true, \
+            'allocations': [{'symbol': 'A', 'weight': 0.5567}, {'symbol': 'B', 'weight': 0.0664}, {'symbol': 'C', 'weight': 0.3769}], \
+            'deleted': ['D'], 'variance': 9 \
+        }, \
+        {'target': 151.8, 'solved': false, 'allocations': [], 'deleted': ['D', 'B', 'C']} \
+    ] \
+}
+
+
+# The page header calls - with the "Back" link call at the top, if there's a URL
+function testHeaderCalls(title, titleMarkdown, backURL):
+    calls = [['documentSetTitle', [title]]]
+    if backURL != null:
+        arrayPush(calls, ['markdownPrint', ['[Back](' + backURL + ')', '']])
+    endif
+    arrayPush(calls, ['markdownPrint', ['# ' + titleMarkdown, '', testMenu, '']])
+    return calls
+endfunction
+
+
+# A running run's progress page calls
+function testRunProgressCalls(name, count, total, percent):
+    calls = testHeaderCalls(name, name)
+    arrayPush(calls, \
+        ['markdownPrint', [ \
+            '**Running...** Computed ' + count + ' of ' + total + ' portfolios (' + percent + '%). A run of many stocks can ' + \
+                'take a minute.', \
+            '' \
+        ]], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            {'html': 'progress', 'attr': {'max': total, 'value': count, 'style': 'width: 30em; max-width: 100%;'}}, \
+            {'text': ' '}, \
+            formsLinkButtonElements('Stop', '<function>') \
+        ]}]], \
+        ['windowSetTimeout', ['<function>', 0]] \
+    )
+    return calls
+endfunction
+
+
+# Concatenate two arrays
+function testArrayConcat(array1, array2):
+    result = arrayCopy(array1)
+    arrayExtend(result, array2)
+    return result
+endfunction
+
+
+# Get a page's call log - for comparing a handler's re-render
+async function testPageCalls(pageFn, data):
+    unittestMockAll(data)
+    pageFn()
+    return unittestMockEnd()
+endfunction
+
+
+# The new run page's fetch mock data
+function testNewRunData(stocks, groups):
+    return {'systemFetch': { \
+        'getStocks': jsonStringify({'stocks': if(stocks != null, stocks, testStocks)}), \
+        'getGroups': jsonStringify({'groups': if(groups != null, groups, testGroups)}) \
+    }}
+endfunction
+
+
+# Create test stocks with prices through 2026-09 - one for each first month
+function testPriceStocks(firstMonths):
+    stocks = []
+    for firstMonth, ixFirstMonth in firstMonths:
+        arrayPush(stocks, {'symbol': 'S' + ixFirstMonth, 'firstMonth': firstMonth, 'lastMonth': '2026-09', 'monthCount': 1, 'updated': testCreated})
+    endfor
+    return stocks
+endfunction
+
+
+# Get test stocks' symbols
+function testStockSymbols(stocks):
+    symbols = []
+    for stock in stocks:
+        arrayPush(symbols, objectGet(stock, 'symbol'))
+    endfor
+    return symbols
+endfunction
+
+
+# A stock update's progress page calls
+function testUpdateProgressCalls(title, backURL, count, total, percent, failedText):
+    calls = testHeaderCalls(title, title, backURL)
+    arrayPush(calls, \
+        ['markdownPrint', ['**Updating stocks...** ' + count + ' of ' + total + ' (' + percent + '%)' + failedText, '']], \
+        ['elementModelRender', [{'html': 'p', 'elem': [ \
+            {'html': 'progress', 'attr': {'max': total, 'value': count, 'style': 'width: 30em; max-width: 100%;'}}, \
+            {'text': ' '}, \
+            formsLinkButtonElements('Stop', '<function>') \
+        ]}]], \
+        ['windowSetTimeout', ['<function>', 0]] \
+    )
+    return calls
 endfunction

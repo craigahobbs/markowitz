@@ -1,0 +1,784 @@
+include <forms.bare>
+include <unittest.bare>
+include <unittestMock.bare>
+include '../../frontend/markowitzNewRun.bare'
+include 'testMarkowitzHelpers.bare'
+
+
+# A new run form field render call
+function testFormFieldCall(name, label, size, value, change):
+    inputID = 'markowitz-' + name
+    inputElements = formsTextElements(inputID, value, size)
+    if change:
+        objectSet(inputElements, 'callback', {'change': '<function>'})
+    endif
+    return ['elementModelRender', [{'html': 'p', 'elem': [ \
+        {'html': 'label', 'attr': {'for': inputID}, 'elem': {'html': 'b', 'elem': {'text': label}}}, \
+        {'html': 'br'}, \
+        inputElements \
+    ]}]]
+endfunction
+
+
+# The excluded stocks field label
+testExcludeLabel = 'Excluded stocks, separated by spaces or commas - updated when the group, end month, or months change'
+
+
+# The new run form render calls - if "change" is true, the analysis period inputs have change callbacks. The message,
+# if any, is before the Start Run button.
+function testFormCalls(form, change, message):
+    calls = [ \
+        testFormFieldCall('name', 'Name', 40, objectGet(form, 'name')), \
+        testFormFieldCall('endMonth', 'End month of the analysis period, "YYYY-MM" (blank for the latest)', 10, objectGet(form, 'endMonth'), change), \
+        testFormFieldCall('months', 'Months in the analysis period', 5, objectGet(form, 'months'), change), \
+        testFormFieldCall('horizon', 'Months in the projection', 5, objectGet(form, 'horizon')), \
+        testFormFieldCall('targets', 'Target annual returns, in percent, separated by spaces or commas', 40, objectGet(form, 'targets')), \
+        testFormFieldCall('exclude', testExcludeLabel, 80, objectGet(form, 'exclude')) \
+    ]
+    if message != null:
+        arrayPush(calls, ['markdownPrint', ['**' + message + '**', '']])
+    endif
+    arrayPush(calls, \
+        ['elementModelRender', [{'html': 'p', 'elem': formsLinkButtonElements('Start Run', '<function>')}]], \
+        ['markdownPrint', [ \
+            'Stocks without a price for every month of the analysis period are excluded from the run. A run needs at least', \
+            'as many months as stocks.', \
+            '' \
+        ]] \
+    )
+    return calls
+endfunction
+
+
+# A stock group's stocks without prices warning text
+function testMissingText(groupURL, missingCount, total):
+    return '**Warning:** ' + missingCount + ' of the group\'s ' + total + ' stocks have no prices - ' + \
+        "[update the stocks](#var.vGroup='" + groupURL + "'&var.vPage='group') for an accurate minimum analysis period."
+endfunction
+
+
+# A stock group's minimum analysis period text
+function testMinimumText(months, count, total):
+    return '**Minimum analysis period:** ' + months + ' months - a run can\'t have more stocks than months, and ' + \
+        count + ' of the group\'s ' + total + ' stocks have prices for ' + months + ' months.'
+endfunction
+
+
+# The new run page's stock group render call - the selected group and its stock count, if any
+function testGroupCall(group, count):
+    elem = [{'html': 'b', 'elem': {'text': 'Stock group'}}, {'html': 'br'}]
+    if group != null:
+        arrayPush(elem, {'text': group + ' (' + count + ' stocks) '})
+    endif
+    arrayPush(elem, formsLinkButtonElements(if(group != null, 'Change', 'Select'), '<function>'))
+    return ['elementModelRender', [{'html': 'p', 'elem': elem}]]
+endfunction
+
+
+# The new run page's stock group selection list render call
+testGroupListCall = ['elementModelRender', [{'html': 'ul', 'elem': [ \
+    {'html': 'li', 'elem': [formsLinkButtonElements('Dow 30', '<function>'), {'text': ' (2 stocks)'}]}, \
+    {'html': 'li', 'elem': [formsLinkButtonElements('S&P 100', '<function>'), {'text': ' (3 stocks)'}]} \
+]}]]
+
+
+# The new run form's input values mock data
+function testFormInputs(form):
+    inputs = {}
+    for name in objectKeys(form):
+        if name != 'group':
+            objectSet(inputs, 'markowitz-' + name, objectGet(form, name))
+        endif
+    endfor
+    return inputs
+endfunction
+
+
+# The new run form's input value calls
+testFormInputCalls = [ \
+    ['documentInputValue', ['markowitz-name']], \
+    ['documentInputValue', ['markowitz-endMonth']], \
+    ['documentInputValue', ['markowitz-months']], \
+    ['documentInputValue', ['markowitz-horizon']], \
+    ['documentInputValue', ['markowitz-targets']], \
+    ['documentInputValue', ['markowitz-exclude']] \
+]
+
+
+# A valid new run form
+testForm = {'name': ' My Run ', 'group': 'Dow 30', 'endMonth': '', 'months': '36', 'horizon': '3', 'targets': '10 20', 'exclude': ''}
+testRequest = {'name': 'My Run', 'group': 'Dow 30', 'months': 36, 'horizon': 3, 'targets': [10, 20]}
+
+
+#
+# New run page tests
+#
+
+
+# The new run page's calls - the header, the message, the stock group, the selection list, the group's stocks without
+# prices warning and minimum analysis period (if a group is selected), and the form
+function testNewRunCalls(fetchCalls, backURL, message, groupCall, selecting, form, minimumText, missingText):
+    calls = arrayCopy(fetchCalls)
+    arrayExtend(calls, testHeaderCalls('New Run', 'New Run', backURL))
+    arrayPush(calls, groupCall)
+    if selecting:
+        arrayPush(calls, testGroupListCall)
+    endif
+    if missingText != null:
+        arrayPush(calls, ['markdownPrint', [missingText, '']])
+    endif
+    if minimumText != null:
+        arrayPush(calls, ['markdownPrint', [minimumText, '']])
+    endif
+    arrayExtend(calls, testFormCalls(form, minimumText != null, message))
+    return calls
+endfunction
+
+
+# The new run page's fetch calls
+testNewRunFetchCalls = [['systemFetch', ['getStocks']], ['systemFetch', ['getGroups']]]
+
+
+# Ten stocks with long price histories and three with 8, 12, and 50 months of prices - the minimum analysis period is
+# 12 months, with 12 stocks
+testMinimumStocks = testPriceStocks(arrayExtend(arrayNewSize(10, '2000-01'), ['2026-01', '2025-09', '2022-07']))
+testMinimumGroups = [{'name': 'Minimum', 'symbols': testStockSymbols(testMinimumStocks)}]
+
+
+async function testMarkowitzNewRunPage():
+    unittestMockAll(testNewRunData())
+    markowitzNewRunPage({'page': 'new'})
+    expected = testNewRunCalls(testNewRunFetchCalls, '#var=', null, testGroupCall(), false, markowitzRunFormDefault)
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage')
+
+
+async function testMarkowitzNewRunPage_group():
+    # The group argument's form has the group's name, minimum months, and excluded stocks - MSFT has no prices
+    unittestMockAll(testNewRunData())
+    markowitzNewRunPage({'page': 'new', 'group': 'S&P 100'})
+    form = objectAssign( \
+        objectCopy(markowitzRunFormDefault), {'name': 'S&P 100', 'group': 'S&P 100', 'months': '6', 'exclude': 'MSFT'} \
+    )
+    expected = testNewRunCalls( \
+        testNewRunFetchCalls, "#var.vGroup='S%26P%20100'&var.vPage='group'", null, testGroupCall('S&P 100', 3), false, form, \
+        testMinimumText(6, 2, 3), testMissingText('S%26P%20100', 1, 3) \
+    )
+    arrayPush(expected, \
+        ['markdownPrint', ['## S&P 100 Stocks', '']], \
+        ['markdownPrint', [testStocksTable]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_group')
+
+
+async function testMarkowitzNewRunPage_groupMinimum():
+    # The group argument's form months (36) are the group's minimum (12)
+    unittestMockAll(testNewRunData(testMinimumStocks, testMinimumGroups))
+    markowitzNewRunPage({'page': 'new', 'group': 'Minimum'})
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 6), ['markdownPrint', [testMinimumText(12, 12, 13), '']])
+    unittestDeepEqual(arrayGet(calls, 9), testFormFieldCall('months', 'Months in the analysis period', 5, '12', true))
+    unittestDeepEqual(arrayGet(calls, 12), testFormFieldCall('exclude', testExcludeLabel, 80, 'S10'))
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_groupMinimum')
+
+
+async function testMarkowitzNewRunPage_groupError():
+    unittestMockAll({'systemFetch': {'getStocks': jsonStringify({'stocks': testStocks})}})
+    markowitzNewRunPage({'page': 'new', 'group': 'S&P 100'})
+    expected = testArrayConcat(testNewRunFetchCalls, testHeaderCalls('New Run', 'New Run', "#var.vGroup='S%26P%20100'&var.vPage='group'"))
+    arrayPush(expected, ['markdownPrint', ['**Error:** The stocks could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_groupError')
+
+
+async function testMarkowitzNewRunPage_selecting():
+    unittestMockAll(testNewRunData())
+    markowitzNewRunPage({'page': 'new'}, testForm, null, true)
+    expected = testNewRunCalls(testNewRunFetchCalls, '#var=', null, testGroupCall('Dow 30', 2), true, testForm, testMinimumText(6, 2, 2))
+    arrayPush(expected, \
+        ['markdownPrint', ['## Dow 30 Stocks', '']], \
+        ['markdownPrint', [testStocksTable]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_selecting')
+
+
+async function testMarkowitzNewRunPage_selectingNoGroups():
+    unittestMockAll(testNewRunData(null, []))
+    markowitzNewRunPage({'page': 'new'}, testForm, null, true)
+    expected = testArrayConcat(testNewRunFetchCalls, testHeaderCalls('New Run', 'New Run', '#var='))
+    arrayPush(expected, \
+        testGroupCall(), \
+        ['markdownPrint', ["There are no groups. [Create a group](#var.vPage='groups').", '']] \
+    )
+    arrayExtend(expected, testFormCalls(testForm))
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_selectingNoGroups')
+
+
+async function testMarkowitzNewRunPage_runAgain():
+    run = objectAssign(objectCopy(testRun), {'group': 'Dow 30', 'excluded': [{'symbol': 'KO', 'reason': 'Excluded by the user'}]})
+    data = testNewRunData()
+    objectSet(objectGet(data, 'systemFetch'), 'getRun?id=r1', jsonStringify({'run': run}))
+    unittestMockAll(data)
+    markowitzNewRunPage({'page': 'new', 'id': 'r1'})
+    form = { \
+        'name': 'Blue <Chips>', \
+        'group': 'Dow 30', \
+        'endMonth': '2023-01', \
+        'months': '36', \
+        'horizon': '3', \
+        'targets': '6.17, 19.56, 151.8', \
+        'exclude': 'KO' \
+    }
+    expected = testNewRunCalls( \
+        testArrayConcat(testNewRunFetchCalls, [['systemFetch', ['getRun?id=r1']]]), \
+        "#var.vId='r1'&var.vPage='run'", null, testGroupCall('Dow 30', 2), false, form, testMinimumText(6, 2, 2) \
+    )
+    arrayPush(expected, \
+        ['markdownPrint', ['## Dow 30 Stocks', '']], \
+        ['markdownPrint', [testStocksTable]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_runAgain')
+
+
+async function testMarkowitzNewRunPage_runAgainSymbols():
+    # A run of stock symbols (no longer supported) is run again with a group - none is selected
+    data = testNewRunData()
+    objectSet(objectGet(data, 'systemFetch'), 'getRun?id=r1', jsonStringify({'run': testRun}))
+    unittestMockAll(data)
+    markowitzNewRunPage({'page': 'new', 'id': 'r1'})
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 6), testGroupCall())
+    unittestDeepEqual(arrayGet(calls, 7), testFormFieldCall('name', 'Name', 40, 'Blue <Chips>'))
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_runAgainSymbols')
+
+
+async function testMarkowitzNewRunPage_unknownGroup():
+    unittestMockAll(testNewRunData())
+    markowitzNewRunPage({'page': 'new', 'group': 'Gone'})
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 5), testGroupCall())
+    unittestDeepEqual(arrayGet(calls, 6), testFormFieldCall('name', 'Name', 40, ''))
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_unknownGroup')
+
+
+async function testMarkowitzNewRunPage_message():
+    unittestMockAll(testNewRunData([]))
+    markowitzNewRunPage({'page': 'new'}, testForm, 'The run failed.')
+    minimumText = "**Note:** Fewer than two of the group's stocks have prices - " + \
+        "[update the stocks](#var.vGroup='Dow%2030'&var.vPage='group')."
+    expected = testNewRunCalls( \
+        testNewRunFetchCalls, '#var=', 'The run failed.', testGroupCall('Dow 30', 2), false, testForm, minimumText, \
+        testMissingText('Dow%2030', 2, 2) \
+    )
+    arrayPush(expected, \
+        ['markdownPrint', ['## Dow 30 Stocks', '']], \
+        ['markdownPrint', ["There are no stocks with prices. [Update the stocks](#var.vGroup='Dow%2030'&var.vPage='group')."]] \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_message')
+
+
+async function testMarkowitzNewRunPage_error():
+    unittestMockAll({'systemFetch': {'getStocks': jsonStringify({'stocks': testStocks})}})
+    markowitzNewRunPage({'page': 'new'})
+    expected = testArrayConcat(testNewRunFetchCalls, testHeaderCalls('New Run', 'New Run', '#var='))
+    arrayPush(expected, ['markdownPrint', ['**Error:** The stocks could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_error')
+
+
+# The new run page's fetch mock data, with the form inputs and the createRun response
+function testNewRunInputData(form):
+    data = testNewRunData()
+    objectSet(data, 'documentInputValue', testFormInputs(form))
+    objectSet(objectGet(data, 'systemFetch'), 'createRun', '{"id": "r2"}')
+    return data
+endfunction
+
+
+async function testMarkowitzNewRunPage_selectBinding():
+    args = {'page': 'new'}
+    data = testNewRunInputData(markowitzRunFormDefault)
+    testVerifyClick(systemPartial(markowitzNewRunPage, args), 'Select', systemPartial(markowitzOnSelectGroup, args, '', true, testStocks, testGroups), data)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_selectBinding')
+
+
+async function testMarkowitzNewRunPage_changeBinding():
+    # The "Change" link hides the open selection list
+    args = {'page': 'new'}
+    data = testNewRunInputData(testForm)
+    render = systemPartial(markowitzNewRunPage, args, testForm, null, true)
+    testVerifyClick(render, 'Change', systemPartial(markowitzOnSelectGroup, args, 'Dow 30', false, testStocks, testGroups), data)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_changeBinding')
+
+
+async function testMarkowitzNewRunPage_setGroupBinding():
+    args = {'page': 'new'}
+    data = testNewRunInputData(testForm)
+    render = systemPartial(markowitzNewRunPage, args, testForm, null, true)
+    for group in testGroups:
+        name = objectGet(group, 'name')
+        testVerifyClick(render, name, systemPartial(markowitzOnSetGroup, args, name, testStocks, testGroups), data)
+    endfor
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_setGroupBinding')
+
+
+# Find the change callback of the input element with the ID
+function testFindChange(model, id):
+    type = systemType(model)
+    if type == 'array':
+        for item in model:
+            found = testFindChange(item, id)
+            if found != null:
+                return found
+            endif
+        endfor
+    elif type == 'object':
+        callback = objectGet(model, 'callback')
+        if callback != null && objectGet(objectGet(model, 'attr', {}), 'id') == id:
+            return objectGet(callback, 'change')
+        endif
+        return testFindChange(objectGet(model, 'elem'), id)
+    endif
+    return null
+endfunction
+
+
+async function testMarkowitzNewRunPage_periodChangeBinding():
+    args = {'page': 'new'}
+    data = testNewRunInputData(objectAssign(objectCopy(testForm), {'months': '12'}))
+    for id in ['markowitz-endMonth', 'markowitz-months']:
+        unittestMockAll(data)
+        markowitzNewRunPage(args, testForm)
+        found = testFindChange(unittestMockEnd(), id)
+        testSameEffect(found, systemPartial(markowitzOnRunPeriodChange, args, 'Dow 30', testStocks, testGroups), data)
+    endfor
+
+    # Without a selected group, there are no change callbacks
+    unittestMockAll(data)
+    markowitzNewRunPage(args)
+    unittestEqual(testFindChange(unittestMockEnd(), 'markowitz-months'), null)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_periodChangeBinding')
+
+
+async function testMarkowitzNewRunPage_startBinding():
+    args = {'page': 'new'}
+    data = testNewRunInputData(testForm)
+    render = systemPartial(markowitzNewRunPage, args, testForm)
+    testVerifyClick(render, 'Start Run', systemPartial(markowitzOnStartRun, args, testStocks, testGroups, 'Dow 30'), data)
+endfunction
+unittestRunTest('testMarkowitzNewRunPage_startBinding')
+
+
+function testMarkowitzRunFormInputs():
+    unittestMockAll({'documentInputValue': testFormInputs(testForm)})
+    unittestDeepEqual(markowitzRunFormInputs('Dow 30'), testForm)
+    unittestDeepEqual(unittestMockEnd(), testFormInputCalls)
+endfunction
+unittestRunTest('testMarkowitzRunFormInputs')
+
+
+async function testMarkowitzOnSelectGroup():
+    args = {'page': 'new'}
+    data = testNewRunInputData(testForm)
+    unittestMockAll(data)
+    markowitzOnSelectGroup(args, 'Dow 30', true, testStocks, testGroups)
+    calls = unittestMockEnd()
+    unittestDeepEqual(arraySlice(calls, 0, 6), testFormInputCalls)
+    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(systemPartial(markowitzNewRunPage, args, testForm, null, true, testStocks, testGroups), data))
+endfunction
+unittestRunTest('testMarkowitzOnSelectGroup')
+
+
+async function testMarkowitzOnSetGroup():
+    # The months are set to the group's minimum, and the excluded stocks are updated
+    args = {'page': 'new'}
+    data = testNewRunInputData(objectAssign(objectCopy(testForm), {'months': '60', 'exclude': 'IBM'}))
+    unittestMockAll(data)
+    markowitzOnSetGroup(args, 'Minimum', testMinimumStocks, testMinimumGroups)
+    calls = unittestMockEnd()
+    form = objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '12', 'exclude': 'S10'})
+    unittestDeepEqual(arraySlice(calls, 0, 6), testFormInputCalls)
+    render = systemPartial(markowitzNewRunPage, args, form, null, false, testMinimumStocks, testMinimumGroups)
+    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(render, data))
+endfunction
+unittestRunTest('testMarkowitzOnSetGroup')
+
+
+async function testMarkowitzOnRunPeriodChange():
+    # The excluded stocks are updated (the user's are replaced) - the months aren't changed
+    args = {'page': 'new'}
+    data = testNewRunInputData(objectAssign(objectCopy(testForm), {'months': '6', 'exclude': 'IBM'}))
+    unittestMockAll(data)
+    markowitzOnRunPeriodChange(args, 'Minimum', testMinimumStocks, testMinimumGroups)
+    calls = unittestMockEnd()
+    form = objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '6', 'exclude': ''})
+    unittestDeepEqual(arraySlice(calls, 0, 6), testFormInputCalls)
+    render = systemPartial(markowitzNewRunPage, args, form, null, false, testMinimumStocks, testMinimumGroups)
+    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(render, data))
+endfunction
+unittestRunTest('testMarkowitzOnRunPeriodChange')
+
+
+# The running run's page calls
+function testRunningCalls(name):
+    calls = testHeaderCalls('New Run', 'New Run')
+    arrayPush(calls, \
+        ['markdownPrint', ['**Running "' + name + '"...** A run of many stocks can take a minute.', '']], \
+        ['windowSetTimeout', ['<function>', 0]] \
+    )
+    return calls
+endfunction
+
+
+async function testMarkowitzOnStartRun():
+    form = objectAssign(objectCopy(testForm), {'exclude': 'msft'})
+    unittestMockAll({'documentInputValue': testFormInputs(form)})
+    markowitzOnStartRun({'page': 'new'}, testStocks, testGroups, 'S&P 100')
+    expected = arrayCopy(testFormInputCalls)
+    arrayExtend(expected, testRunningCalls(' My Run '))
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzOnStartRun')
+
+
+async function testMarkowitzOnStartRun_timeoutBinding():
+    args = {'page': 'new'}
+    form = objectAssign(objectCopy(testForm), {'group': 'S&P 100', 'exclude': 'msft'})
+    request = objectAssign(objectCopy(testRequest), {'group': 'S&P 100', 'exclude': ['MSFT']})
+    data = {'documentInputValue': testFormInputs(form), 'systemFetch': {'createRun': '{"id": "r2"}'}}
+    callbacks = testCaptureTimeouts(systemPartial(markowitzOnStartRun, args, testStocks, testGroups, 'S&P 100'), data)
+    testSameEffect(arrayGet(callbacks, 0), systemPartial(markowitzOnStartRunTimeout, args, form, request, testStocks, testGroups), data)
+endfunction
+unittestRunTest('testMarkowitzOnStartRun_timeoutBinding')
+
+
+async function testMarkowitzOnStartRunTimeout():
+    # The run is created - its portfolios' progress is rendered
+    unittestMockAll({'systemFetch': {'createRun': '{"id": "r2"}'}})
+    markowitzOnStartRunTimeout({'page': 'new'}, testForm, testRequest, testStocks, testGroups)
+    expected = [['systemFetch', [{'url': 'createRun', 'body': jsonStringify(testRequest)}]]]
+    arrayExtend(expected, testRunProgressCalls('My Run', 0, 2, '0'))
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzOnStartRunTimeout')
+
+
+async function testMarkowitzOnStartRunTimeout_error():
+    args = {'page': 'new'}
+    data = testNewRunData()
+    unittestMockAll(data)
+    markowitzOnStartRunTimeout(args, testForm, testRequest, testStocks, testGroups)
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['systemFetch', [{'url': 'createRun', 'body': jsonStringify(testRequest)}]])
+    render = systemPartial(markowitzNewRunPage, args, testForm, 'The run failed.', false, testStocks, testGroups)
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(render, data))
+endfunction
+unittestRunTest('testMarkowitzOnStartRunTimeout_error')
+
+
+async function testMarkowitzOnStartRun_invalid():
+    args = {'page': 'new'}
+    form = objectAssign(objectCopy(testForm), {'group': ''})
+    data = testNewRunData()
+    objectSet(data, 'documentInputValue', testFormInputs(form))
+    unittestMockAll(data)
+    markowitzOnStartRun(args, testStocks, testGroups, '')
+    calls = unittestMockEnd()
+    unittestDeepEqual(arraySlice(calls, 0, 6), testFormInputCalls)
+    message = 'Select a stock group.'
+    render = systemPartial(markowitzNewRunPage, args, form, message, false, testStocks, testGroups)
+    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(render, data))
+endfunction
+unittestRunTest('testMarkowitzOnStartRun_invalid')
+
+
+async function testMarkowitzOnStartRun_missing():
+    # MSFT has no prices and isn't excluded - it's added to the user's excluded stocks, and the run isn't started
+    args = {'page': 'new'}
+    inputForm = objectAssign(objectCopy(testForm), {'exclude': 'KO'})
+    data = testNewRunData()
+    objectSet(data, 'documentInputValue', testFormInputs(inputForm))
+    unittestMockAll(data)
+    markowitzOnStartRun(args, testStocks, testGroups, 'S&P 100')
+    calls = unittestMockEnd()
+    unittestDeepEqual(arraySlice(calls, 0, 6), testFormInputCalls)
+    form = objectAssign(objectCopy(inputForm), {'group': 'S&P 100', 'exclude': 'KO MSFT'})
+    message = 'Updated the excluded stocks - 1 of the group\'s stocks don\'t have prices for the analysis period. ' + \
+        'Click "Start Run" again to start the run.'
+    render = systemPartial(markowitzNewRunPage, args, form, message, false, testStocks, testGroups)
+    unittestDeepEqual(arraySlice(calls, 6), testPageCalls(render, data))
+endfunction
+unittestRunTest('testMarkowitzOnStartRun_missing')
+
+
+#
+# Minimum analysis period tests
+#
+
+
+function testMarkowitzGroupFind():
+    unittestDeepEqual(markowitzGroupFind(testGroups, 'S&P 100'), arrayGet(testGroups, 1))
+    unittestEqual(markowitzGroupFind(testGroups, 'Gone'), null)
+endfunction
+unittestRunTest('testMarkowitzGroupFind')
+
+
+function testMarkowitzStockMap():
+    unittestDeepEqual(markowitzStockMap(testStocks), {'IBM': arrayGet(testStocks, 0), 'KO': arrayGet(testStocks, 1)})
+endfunction
+unittestRunTest('testMarkowitzStockMap')
+
+
+function testMarkowitzRunMinimumMonths():
+    symbols = testStockSymbols(testMinimumStocks)
+    stockMap = markowitzStockMap(testMinimumStocks)
+    unittestDeepEqual(markowitzRunMinimumMonths(symbols, stockMap), {'months': 12, 'count': 12})
+
+    # Ending in 2025-09, the stocks with 8 and 12 months of prices have none
+    unittestDeepEqual(markowitzRunMinimumMonths(symbols, stockMap, markowitzMonthIndex('2025-09')), {'months': 11, 'count': 11})
+
+    # Unknown stocks are ignored - and the minimum is at least the minimum months
+    unittestDeepEqual(markowitzRunMinimumMonths(['S0', 'XYZ'], stockMap), {'months': 6, 'count': 1})
+    unittestDeepEqual(markowitzRunMinimumMonths(['XYZ'], stockMap), {'months': 6, 'count': 0})
+endfunction
+unittestRunTest('testMarkowitzRunMinimumMonths')
+
+
+function testMarkowitzRunMinimumMonths_tooMany():
+    stocks = testPriceStocks(arrayNewSize(601, '1950-01'))
+    unittestDeepEqual(markowitzRunMinimumMonths(testStockSymbols(stocks), markowitzStockMap(stocks)), {'months': null, 'count': 601})
+endfunction
+unittestRunTest('testMarkowitzRunMinimumMonths_tooMany')
+
+
+function testMarkowitzGroupMinimumText():
+    unittestEqual( \
+        markowitzGroupMinimumText(arrayGet(testMinimumGroups, 0), testMinimumStocks), \
+        testMinimumText(12, 12, 13) \
+    )
+    stocks = testPriceStocks(arrayNewSize(601, '1950-01'))
+    unittestEqual( \
+        markowitzGroupMinimumText({'name': 'Big', 'symbols': testStockSymbols(stocks)}, stocks), \
+        "**Note:** This group can't be run - 601 of its 601 stocks have prices for 600 months (the most a run can have), " + \
+            "and a run can't have more stocks than months. Exclude at least 1 more stocks to run it." \
+    )
+    unittestEqual( \
+        markowitzGroupMinimumText({'name': 'S&P 100', 'symbols': ['XYZ']}, testStocks), \
+        "**Note:** Fewer than two of the group's stocks have prices - [update the stocks](#var.vGroup='S%26P%20100'&var.vPage='group')." \
+    )
+endfunction
+unittestRunTest('testMarkowitzGroupMinimumText')
+
+
+function testMarkowitzGroupMissingText():
+    unittestEqual(markowitzGroupMissingText(arrayGet(testGroups, 1), testStocks), testMissingText('S%26P%20100', 1, 3))
+    unittestEqual(markowitzGroupMissingText(arrayGet(testGroups, 0), testStocks), null)
+endfunction
+unittestRunTest('testMarkowitzGroupMissingText')
+
+
+function testMarkowitzRunFormUpdate():
+    # The months are raised to the minimum - the stock with 8 months of prices is excluded
+    form = objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '6', 'exclude': 'S0'})
+    markowitzRunFormUpdate(form, testMinimumStocks, testMinimumGroups, true)
+    unittestDeepEqual(form, objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '12', 'exclude': 'S10'}))
+
+    # More months than the minimum are lowered to the minimum
+    form = objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '24'})
+    markowitzRunFormUpdate(form, testMinimumStocks, testMinimumGroups, true)
+    unittestDeepEqual(form, objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '12', 'exclude': 'S10'}))
+
+    # Without setting the months, the stocks with 8 and 12 months of prices are excluded from 24 months
+    form = objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '24'})
+    markowitzRunFormUpdate(form, testMinimumStocks, testMinimumGroups, false)
+    unittestDeepEqual(form, objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '24', 'exclude': 'S10 S11'}))
+
+    # Invalid months are set to the minimum
+    form = objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': 'many'})
+    markowitzRunFormUpdate(form, testMinimumStocks, testMinimumGroups, true)
+    unittestDeepEqual(form, objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '12', 'exclude': 'S10'}))
+
+    # The end month - the stocks without prices from 2024-11 to 2025-09 are excluded
+    form = objectAssign(objectCopy(testForm), {'group': 'Minimum', 'endMonth': ' 2025-09 ', 'months': '10'})
+    markowitzRunFormUpdate(form, testMinimumStocks, testMinimumGroups, false)
+    unittestEqual(objectGet(form, 'exclude'), 'S10 S11')
+endfunction
+unittestRunTest('testMarkowitzRunFormUpdate')
+
+
+function testMarkowitzRunFormUpdate_name():
+    # An empty name, or another group's name, is set to the selected group's name
+    for name in [' ', 'Dow 30', 'Minimum']:
+        form = objectAssign(objectCopy(testForm), {'name': name, 'group': 'Minimum'})
+        markowitzRunFormUpdate(form, testMinimumStocks, arrayExtend(arrayCopy(testMinimumGroups), testGroups), true)
+        unittestEqual(objectGet(form, 'name'), 'Minimum')
+    endfor
+
+    # A user's name is kept
+    form = objectAssign(objectCopy(testForm), {'group': 'Minimum'})
+    markowitzRunFormUpdate(form, testMinimumStocks, testMinimumGroups, true)
+    unittestEqual(objectGet(form, 'name'), ' My Run ')
+
+    # The name isn't changed unless the group was selected
+    form = objectAssign(objectCopy(testForm), {'name': '', 'group': 'Minimum'})
+    markowitzRunFormUpdate(form, testMinimumStocks, testMinimumGroups, false)
+    unittestEqual(objectGet(form, 'name'), '')
+endfunction
+unittestRunTest('testMarkowitzRunFormUpdate_name')
+
+
+function testMarkowitzRunFormUpdate_noChange():
+    # Invalid months, without setting the months, don't change the excluded stocks
+    form = objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': 'many', 'exclude': 'S0'})
+    markowitzRunFormUpdate(form, testMinimumStocks, testMinimumGroups, false)
+    unittestDeepEqual(form, objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': 'many', 'exclude': 'S0'}))
+
+    # An unknown group changes nothing
+    form = objectAssign(objectCopy(testForm), {'group': 'Gone', 'months': '6'})
+    markowitzRunFormUpdate(form, testMinimumStocks, testMinimumGroups, true)
+    unittestDeepEqual(form, objectAssign(objectCopy(testForm), {'group': 'Gone', 'months': '6'}))
+
+    # The months are the maximum if the group has too many stocks
+    stocks = testPriceStocks(arrayNewSize(601, '1950-01'))
+    groups = [{'name': 'Big', 'symbols': testStockSymbols(stocks)}]
+    form = objectAssign(objectCopy(testForm), {'group': 'Big'})
+    markowitzRunFormUpdate(form, stocks, groups, true)
+    unittestEqual(objectGet(form, 'months'), '600')
+endfunction
+unittestRunTest('testMarkowitzRunFormUpdate_noChange')
+
+
+#
+# Run request tests
+#
+
+
+function testMarkowitzRunRequest():
+    unittestDeepEqual(markowitzRunRequest(testForm, testStocks, testGroups), {'request': testRequest})
+endfunction
+unittestRunTest('testMarkowitzRunRequest')
+
+
+function testMarkowitzRunRequest_exclude():
+    # Excluding MSFT (no prices) leaves IBM and KO
+    form = objectAssign(objectCopy(testForm), {'group': 'S&P 100', 'exclude': ' msft, XYZ '})
+    request = objectAssign(objectCopy(testRequest), {'group': 'S&P 100', 'exclude': ['MSFT', 'XYZ']})
+    unittestDeepEqual(markowitzRunRequest(form, testStocks, testGroups), {'request': request})
+
+    # Excluding IBM leaves MSFT, without prices
+    unittestDeepEqual(markowitzRunRequest(objectAssign(objectCopy(form), {'exclude': 'IBM'}), testStocks, testGroups), {'missing': ['MSFT']})
+
+    # Excluding IBM and MSFT leaves one stock
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(form), {'exclude': 'IBM MSFT'}), testStocks, testGroups), \
+        {'error': 'Fewer than two of the group\'s stocks have prices for the analysis period - update the group\'s stocks.'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_exclude')
+
+
+function testMarkowitzRunRequest_noGroup():
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'group': ''}), testStocks, testGroups), \
+        {'error': 'Select a stock group.'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_noGroup')
+
+
+function testMarkowitzRunRequest_unknownGroup():
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'group': 'Nasdaq'}), testStocks, testGroups), \
+        {'error': 'Unknown stock group "Nasdaq".'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_unknownGroup')
+
+
+function testMarkowitzRunRequest_endMonth():
+    form = objectAssign(objectCopy(testForm), {'endMonth': ' 1990-06 ', 'months': '60'})
+    request = objectAssign(objectCopy(testRequest), {'endMonth': '1990-06', 'months': 60})
+    unittestDeepEqual(markowitzRunRequest(form, testStocks, testGroups), {'request': request})
+endfunction
+unittestRunTest('testMarkowitzRunRequest_endMonth')
+
+
+function testMarkowitzRunRequest_invalid():
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'name': ' '}), testStocks, testGroups), \
+        {'error': 'Invalid "Name" value.'} \
+    )
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'months': '-5'}), testStocks, testGroups), \
+        {'error': 'Invalid "Months in the analysis period" value.'} \
+    )
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'months': 'many'}), testStocks, testGroups), \
+        {'error': 'Invalid "Months in the analysis period" value.'} \
+    )
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'targets': '10, ten'}), testStocks, testGroups), \
+        {'error': 'Invalid "Target annual returns, in percent, separated by spaces or commas" value.'} \
+    )
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'exclude': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'}), testStocks, testGroups), \
+        {'error': 'Invalid "' + testExcludeLabel + '" value.'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_invalid')
+
+
+function testMarkowitzRunRequest_invalidMonth():
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(testForm), {'endMonth': '2023-13'}), testStocks, testGroups), \
+        {'error': 'Invalid end month "2023-13" - use "YYYY-MM".'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_invalidMonth')
+
+
+function testMarkowitzRunRequest_tooManyStocks():
+    unittestDeepEqual( \
+        markowitzRunRequest( \
+            objectAssign(objectCopy(testForm), {'group': 'Minimum', 'months': '11', 'exclude': 'S10'}), testMinimumStocks, testMinimumGroups \
+        ), \
+        {'error': 'There are more of the group\'s stocks with prices for the analysis period (12) than months (11) - ' + \
+            'increase the months in the analysis period, or exclude stocks.'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_tooManyStocks')
+
+
+function testMarkowitzRunRequest_tooFewStocks():
+    # KO's prices start in 1985-01 - the analysis period's starting price is needed
+    form = objectAssign(objectCopy(testForm), {'group': 'S&P 100', 'exclude': 'MSFT'})
+    unittestEqual(objectHas(markowitzRunRequest(objectAssign(objectCopy(form), {'endMonth': '1988-01'}), testStocks, testGroups), 'request'), true)
+    unittestDeepEqual(markowitzRunRequest(objectAssign(objectCopy(form), {'endMonth': '1987-12'}), testStocks, testGroups), {'missing': ['KO']})
+
+    # Excluded, KO leaves one stock
+    unittestDeepEqual( \
+        markowitzRunRequest(objectAssign(objectCopy(form), {'endMonth': '1987-12', 'exclude': 'KO MSFT'}), testStocks, testGroups), \
+        {'error': 'Fewer than two of the group\'s stocks have prices for the analysis period - update the group\'s stocks.'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzRunRequest_tooFewStocks')

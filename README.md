@@ -123,6 +123,11 @@ The project layout:
 | `admin/markowitzAdmin.bare` | The database administration commands - `python3 wsgi.py check\|init\|reset` |
 | `admin/markowitzGroups.json` | The built-in stock groups |
 | `frontend/markowitz.bare` | The MarkdownUp frontend application |
+| `frontend/markowitzCommon.bare` | The frontend's common page helpers |
+| `frontend/markowitzGroups.bare` | The groups and group pages |
+| `frontend/markowitzNewRun.bare` | The new run page |
+| `frontend/markowitzRuns.bare` | The runs and run pages, and a running run's progress |
+| `frontend/markowitzStocks.bare` | The stocks and stock pages, and stock updates |
 | `frontend/markowitzTypes.bare` | The API's [Schema Markdown](https://craigahobbs.github.io/schema-markdown-js/language/) types, shared by the backend and frontend |
 | `frontend/markowitzUtil.bare` | The month, symbol, and run stock selection helpers, shared by the backend and frontend |
 | `wsgi.py` | The WSGI application, and the database administration command-line interface |

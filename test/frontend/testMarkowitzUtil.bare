@@ -1,0 +1,98 @@
+include <unittest.bare>
+include <unittestMock.bare>
+include '../../frontend/markowitzUtil.bare'
+include 'testMarkowitzHelpers.bare'
+
+
+#
+# Run stock selection tests
+#
+
+
+function testMarkowitzRunSelect():
+    stocks = { \
+        'IBM': {'firstMonth': '1962-01', 'lastMonth': '2026-09'}, \
+        'KO': {'firstMonth': '1985-01', 'lastMonth': '2026-08'}, \
+        'NEW': {'firstMonth': '2025-01', 'lastMonth': '2026-09'} \
+    }
+
+    # The end month defaults to the last month for which every stock has a price
+    unittestDeepEqual(markowitzRunSelect(['IBM', 'KO', 'NEW', 'XYZ'], stocks, null, 36), { \
+        'endIndex': markowitzMonthIndex('2026-08'), \
+        'symbols': ['IBM', 'KO'], \
+        'excluded': [ \
+            {'symbol': 'NEW', 'reason': 'Prices start in 2025-01'}, \
+            {'symbol': 'XYZ', 'reason': 'No prices - update the stock on the Stocks page'} \
+        ] \
+    })
+    unittestDeepEqual(markowitzRunSelect(['IBM', 'KO'], stocks, markowitzMonthIndex('2026-09'), 36), { \
+        'endIndex': markowitzMonthIndex('2026-09'), \
+        'symbols': ['IBM'], \
+        'excluded': [{'symbol': 'KO', 'reason': 'Prices end in 2026-08'}] \
+    })
+
+    # Excluded stocks - an excluded stock without prices for the analysis period is excluded for its prices, and the
+    # end month is the stocks' (not excluded)
+    unittestDeepEqual(markowitzRunSelect(['IBM', 'KO', 'NEW'], stocks, null, 36, ['KO', 'NEW']), { \
+        'endIndex': markowitzMonthIndex('2026-09'), \
+        'symbols': ['IBM'], \
+        'excluded': [ \
+            {'symbol': 'KO', 'reason': 'Prices end in 2026-08'}, \
+            {'symbol': 'NEW', 'reason': 'Prices start in 2025-01'} \
+        ] \
+    })
+    unittestDeepEqual(markowitzRunSelect(['IBM', 'KO'], stocks, markowitzMonthIndex('2026-08'), 36, ['KO']), { \
+        'endIndex': markowitzMonthIndex('2026-08'), \
+        'symbols': ['IBM'], \
+        'excluded': [{'symbol': 'KO', 'reason': 'Excluded by the user'}] \
+    })
+
+    # No stock has prices
+    unittestDeepEqual(markowitzRunSelect(['XYZ'], stocks, null, 36), { \
+        'endIndex': null, \
+        'symbols': [], \
+        'excluded': [{'symbol': 'XYZ', 'reason': 'No prices - update the stock on the Stocks page'}] \
+    })
+endfunction
+unittestRunTest('testMarkowitzRunSelect')
+
+
+function testMarkowitzRunEndIndex():
+    # With fewer than ten stocks, the last month for which every stock has a price
+    stocks = testPriceStocks(arrayNewSize(9, '2000-01'))
+    objectSet(arrayGet(stocks, 4), 'lastMonth', '2019-06')
+    unittestEqual(markowitzRunEndIndex(testStockSymbols(stocks), markowitzStockMap(stocks)), markowitzMonthIndex('2019-06'))
+
+    # With ten stocks, a stock's prices that end early don't end the analysis period early - two stocks' do
+    stocks = testPriceStocks(arrayNewSize(10, '2000-01'))
+    objectSet(arrayGet(stocks, 4), 'lastMonth', '2019-06')
+    unittestEqual(markowitzRunEndIndex(testStockSymbols(stocks), markowitzStockMap(stocks)), markowitzMonthIndex('2026-09'))
+    objectSet(arrayGet(stocks, 7), 'lastMonth', '2020-01')
+    unittestEqual(markowitzRunEndIndex(testStockSymbols(stocks), markowitzStockMap(stocks)), markowitzMonthIndex('2020-01'))
+
+    # Unknown stocks are ignored
+    unittestEqual(markowitzRunEndIndex(['S0', 'XYZ'], markowitzStockMap(stocks)), markowitzMonthIndex('2026-09'))
+    unittestEqual(markowitzRunEndIndex(['XYZ'], markowitzStockMap(stocks)), null)
+endfunction
+unittestRunTest('testMarkowitzRunEndIndex')
+
+
+#
+# Month and stock symbol tests
+#
+
+
+function testMarkowitzSymbols():
+    unittestDeepEqual(markowitzSymbols(['ko', 'IBM', 'KO', 'brk-b']), ['BRK-B', 'IBM', 'KO'])
+endfunction
+unittestRunTest('testMarkowitzSymbols')
+
+
+function testMarkowitzMonths():
+    unittestEqual(markowitzMonthIndex('2023-01'), 2023 * 12)
+    unittestEqual(markowitzMonthIndex('2023-00'), null)
+    unittestEqual(markowitzMonthIndex('January'), null)
+    unittestEqual(markowitzMonthString(2023 * 12 + 9), '2023-10')
+    unittestEqual(markowitzMonthString(2023 * 12 + 2), '2023-03')
+endfunction
+unittestRunTest('testMarkowitzMonths')

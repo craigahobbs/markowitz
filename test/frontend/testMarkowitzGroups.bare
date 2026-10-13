@@ -1,0 +1,355 @@
+include <forms.bare>
+include <unittest.bare>
+include <unittestMock.bare>
+include '../../frontend/markowitzGroups.bare'
+include 'testMarkowitzHelpers.bare'
+
+
+#
+# Groups page tests
+#
+
+
+# The groups page's new group form render call
+function testGroupFormCall(name, symbols):
+    return ['elementModelRender', [[ \
+        {'html': 'p', 'elem': [ \
+            {'html': 'label', 'attr': {'for': 'markowitz-group-name'}, 'elem': {'html': 'b', 'elem': {'text': 'Name'}}}, \
+            {'html': 'br'}, \
+            formsTextElements('markowitz-group-name', name, 40) \
+        ]}, \
+        {'html': 'p', 'elem': [ \
+            {'html': 'label', 'attr': {'for': 'markowitz-group-symbols'}, 'elem': {'html': 'b', 'elem': {'text': 'Stock symbols, separated by spaces or commas'}}}, \
+            {'html': 'br'}, \
+            formsTextElements('markowitz-group-symbols', symbols, 80) \
+        ]}, \
+        {'html': 'p', 'elem': formsLinkButtonElements('Create Group', '<function>')} \
+    ]]]
+endfunction
+
+
+# The groups page's fetch mock data
+testGroupsData = {'systemFetch': {'getGroups': jsonStringify({'groups': testGroups})}}
+
+
+async function testMarkowitzGroupsPage():
+    unittestMockAll(testGroupsData)
+    markowitzGroupsPage({'page': 'groups'})
+    expected = testHeaderCalls('Groups', 'Groups')
+    arrayPush(expected, \
+        ['systemFetch', ['getGroups']], \
+        ['markdownPrint', [[ \
+            '| Group                                                  | Stocks |', \
+            '|--------------------------------------------------------|-------:|', \
+            "| [Dow 30](#var.vGroup='Dow%2030'&var.vPage='group')     |      2 |", \
+            "| [S&P 100](#var.vGroup='S%26P%20100'&var.vPage='group') |      3 |" \
+        ]]], \
+        ['markdownPrint', ['', '## New Group', '']], \
+        testGroupFormCall('', '') \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzGroupsPage')
+
+
+async function testMarkowitzGroupsPage_empty():
+    unittestMockAll({'systemFetch': {'getGroups': jsonStringify({'groups': []})}})
+    markowitzGroupsPage({'page': 'groups'}, {'name': 'New', 'symbols': 'IBM'}, 'The group could not be created.')
+    expected = testHeaderCalls('Groups', 'Groups')
+    arrayPush(expected, \
+        ['systemFetch', ['getGroups']], \
+        ['markdownPrint', ['**The group could not be created.**', '']], \
+        ['markdownPrint', ['There are no groups.']], \
+        ['markdownPrint', ['', '## New Group', '']], \
+        testGroupFormCall('New', 'IBM') \
+    )
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzGroupsPage_empty')
+
+
+async function testMarkowitzGroupsPage_error():
+    unittestMockAll({})
+    markowitzGroupsPage({'page': 'groups'})
+    expected = testHeaderCalls('Groups', 'Groups')
+    arrayPush(expected, ['systemFetch', ['getGroups']], ['markdownPrint', ['**Error:** The groups could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzGroupsPage_error')
+
+
+async function testMarkowitzGroupsPage_createBinding():
+    args = {'page': 'groups'}
+    data = { \
+        'documentInputValue': {'markowitz-group-name': 'New', 'markowitz-group-symbols': 'ibm'}, \
+        'systemFetch': {'getGroups': jsonStringify({'groups': testGroups}), 'setGroup': '{}'} \
+    }
+    testVerifyClick( \
+        systemPartial(markowitzGroupsPage, args), 'Create Group', \
+        systemPartial(markowitzOnCreateGroup, args, ['Dow 30', 'S&P 100']), data \
+    )
+endfunction
+unittestRunTest('testMarkowitzGroupsPage_createBinding')
+
+
+# The group form's input value calls
+testGroupFormInputCalls = [ \
+    ['documentInputValue', ['markowitz-group-name']], \
+    ['documentInputValue', ['markowitz-group-symbols']] \
+]
+
+
+async function testMarkowitzOnCreateGroup():
+    unittestMockAll({ \
+        'documentInputValue': {'markowitz-group-name': ' New ', 'markowitz-group-symbols': 'ko, ibm'}, \
+        'systemFetch': {'setGroup': '{}'} \
+    })
+    markowitzOnCreateGroup({'page': 'groups'}, ['Dow 30'])
+    unittestDeepEqual(unittestMockEnd(), testArrayConcat(testGroupFormInputCalls, [ \
+        ['systemFetch', [{'url': 'setGroup', 'body': '{"name":"New","symbols":["IBM","KO"]}'}]], \
+        ['windowSetLocation', ["#var.vGroup='New'&var.vPage='group'"]] \
+    ]))
+endfunction
+unittestRunTest('testMarkowitzOnCreateGroup')
+
+
+# Test a group creation that fails - its message and re-rendered page
+async function testOnCreateGroupFailure(inputs, fetchCount, message):
+    args = {'page': 'groups'}
+    data = {'documentInputValue': inputs, 'systemFetch': {'getGroups': jsonStringify({'groups': testGroups})}}
+    unittestMockAll(data)
+    markowitzOnCreateGroup(args, ['Dow 30'])
+    calls = unittestMockEnd()
+    form = {'name': objectGet(inputs, 'markowitz-group-name'), 'symbols': objectGet(inputs, 'markowitz-group-symbols')}
+    unittestDeepEqual(arraySlice(calls, 0, 2), testGroupFormInputCalls)
+    unittestDeepEqual( \
+        arraySlice(calls, 2 + fetchCount), \
+        testPageCalls(systemPartial(markowitzGroupsPage, args, form, message), data) \
+    )
+endfunction
+
+
+async function testMarkowitzOnCreateGroup_invalid():
+    testOnCreateGroupFailure( \
+        {'markowitz-group-name': 'New', 'markowitz-group-symbols': ' '}, 0, \
+        'Enter a group name and one to one thousand stock symbols.' \
+    )
+endfunction
+unittestRunTest('testMarkowitzOnCreateGroup_invalid')
+
+
+async function testMarkowitzOnCreateGroup_exists():
+    testOnCreateGroupFailure({'markowitz-group-name': 'Dow 30', 'markowitz-group-symbols': 'IBM'}, 0, 'The group "Dow 30" exists.')
+endfunction
+unittestRunTest('testMarkowitzOnCreateGroup_exists')
+
+
+async function testMarkowitzOnCreateGroup_error():
+    testOnCreateGroupFailure({'markowitz-group-name': 'New', 'markowitz-group-symbols': 'IBM'}, 1, 'The group could not be created.')
+endfunction
+unittestRunTest('testMarkowitzOnCreateGroup_error')
+
+
+function testMarkowitzGroupRequest():
+    unittestDeepEqual(markowitzGroupRequest('Test', 'ko ibm'), {'name': 'Test', 'symbols': ['IBM', 'KO']})
+    unittestEqual(markowitzGroupRequest('', 'IBM'), null)
+    unittestEqual(markowitzGroupRequest('Test', ', '), null)
+endfunction
+unittestRunTest('testMarkowitzGroupRequest')
+
+
+#
+# Group page tests
+#
+
+
+# The group page's fetch mock data
+function testGroupData(stocks):
+    return {'systemFetch': { \
+        'getGroup?name=S%26P%20100': jsonStringify({'group': arrayGet(testGroups, 1), 'stocks': if(stocks != null, stocks, testStocks)}) \
+    }}
+endfunction
+
+
+# The group page's controls render calls
+testGroupControlCalls = [ \
+    ['elementModelRender', [{'html': 'p', 'elem': [ \
+        formsLinkButtonElements('Update Stocks', '<function>'), \
+        {'text': ' | '}, \
+        formsLinkElements('New Run', "#var.vGroup='S%26P%20100'&var.vPage='new'"), \
+        {'text': ' | '}, \
+        formsLinkButtonElements('Delete', '<function>') \
+    ]}]], \
+    ['markdownPrint', ['## Stock Symbols', '']], \
+    ['elementModelRender', [{'html': 'p', 'elem': [ \
+        formsTextElements('markowitz-group-symbols', 'IBM KO MSFT', 80), \
+        {'text': ' '}, \
+        formsLinkButtonElements('Save', '<function>') \
+    ]}]], \
+    ['markdownPrint', ['## Stocks', '']] \
+]
+
+
+async function testMarkowitzGroupPage():
+    args = {'page': 'group', 'group': 'S&P 100'}
+    unittestMockAll(testGroupData())
+    markowitzGroupPage(args)
+    expected = [['systemFetch', ['getGroup?name=S%26P%20100']]]
+    arrayExtend(expected, testHeaderCalls('S&P 100', 'S&P 100', "#var.vPage='groups'"))
+    arrayPush(expected, \
+        ['markdownPrint', ['- **Stocks:** 3']], \
+        ['markdownPrint', ['- **Stocks without prices:** MSFT']], \
+        ['markdownPrint', ['']] \
+    )
+    arrayExtend(expected, testGroupControlCalls)
+    arrayPush(expected, ['markdownPrint', [testStocksTable]])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzGroupPage')
+
+
+async function testMarkowitzGroupPage_noStocks():
+    args = {'page': 'group', 'group': 'S&P 100'}
+    unittestMockAll(testGroupData([]))
+    markowitzGroupPage(args, 'Saved the group.')
+    expected = [['systemFetch', ['getGroup?name=S%26P%20100']]]
+    arrayExtend(expected, testHeaderCalls('S&P 100', 'S&P 100', "#var.vPage='groups'"))
+    arrayPush(expected, \
+        ['markdownPrint', ['**Saved the group.**', '']], \
+        ['markdownPrint', ['- **Stocks:** 3']], \
+        ['markdownPrint', ['- **Stocks without prices:** IBM, KO, MSFT']], \
+        ['markdownPrint', ['']] \
+    )
+    arrayExtend(expected, testGroupControlCalls)
+    arrayPush(expected, ['markdownPrint', ['There are no stocks with prices.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzGroupPage_noStocks')
+
+
+async function testMarkowitzGroupPage_allStocks():
+    args = {'page': 'group', 'group': 'Dow 30'}
+    unittestMockAll({'systemFetch': {'getGroup?name=Dow%2030': jsonStringify({'group': arrayGet(testGroups, 0), 'stocks': testStocks})}})
+    markowitzGroupPage(args)
+    calls = unittestMockEnd()
+    unittestDeepEqual(arraySlice(calls, 4, 6), [['markdownPrint', ['- **Stocks:** 2']], ['markdownPrint', ['']]])
+endfunction
+unittestRunTest('testMarkowitzGroupPage_allStocks')
+
+
+async function testMarkowitzGroupPage_error():
+    unittestMockAll({})
+    markowitzGroupPage({'page': 'group', 'group': 'Test'})
+    expected = [['systemFetch', ['getGroup?name=Test']]]
+    arrayExtend(expected, testHeaderCalls('Group', 'Group', "#var.vPage='groups'"))
+    arrayPush(expected, ['markdownPrint', ['**Error:** The group could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzGroupPage_error')
+
+
+async function testMarkowitzGroupPage_noGroup():
+    unittestMockAll({})
+    markowitzGroupPage({'page': 'group'})
+    expected = testHeaderCalls('Group', 'Group', "#var.vPage='groups'")
+    arrayPush(expected, ['markdownPrint', ['**Error:** The group could not be loaded.']])
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzGroupPage_noGroup')
+
+
+async function testMarkowitzGroupPage_updateBinding():
+    args = {'page': 'group', 'group': 'S&P 100'}
+    testVerifyClick( \
+        systemPartial(markowitzGroupPage, args), 'Update Stocks', \
+        systemPartial(markowitzOnUpdateGroupStocks, args, 'S&P 100', ['IBM', 'KO', 'MSFT']), testGroupData() \
+    )
+endfunction
+unittestRunTest('testMarkowitzGroupPage_updateBinding')
+
+
+async function testMarkowitzGroupPage_saveBinding():
+    args = {'page': 'group', 'group': 'S&P 100'}
+    data = testGroupData()
+    objectSet(data, 'documentInputValue', {'markowitz-group-symbols': 'IBM'})
+    objectSet(objectGet(data, 'systemFetch'), 'setGroup', '{}')
+    testVerifyClick(systemPartial(markowitzGroupPage, args), 'Save', systemPartial(markowitzOnSaveGroup, args, 'S&P 100'), data)
+endfunction
+unittestRunTest('testMarkowitzGroupPage_saveBinding')
+
+
+async function testMarkowitzGroupPage_deleteBinding():
+    args = {'page': 'group', 'group': 'S&P 100'}
+    data = testGroupData()
+    objectSet(objectGet(data, 'systemFetch'), 'deleteGroup', '{}')
+    testVerifyClick(systemPartial(markowitzGroupPage, args), 'Delete', systemPartial(markowitzOnDeleteGroup, args, 'S&P 100'), data)
+endfunction
+unittestRunTest('testMarkowitzGroupPage_deleteBinding')
+
+
+async function testMarkowitzOnUpdateGroupStocks():
+    unittestMockAll()
+    markowitzOnUpdateGroupStocks({'page': 'group', 'group': 'S&P 100'}, 'S&P 100', ['IBM', 'KO', 'MSFT'])
+    unittestDeepEqual(unittestMockEnd(), testUpdateProgressCalls('S&P 100', "#var.vPage='groups'", 0, 3, '0', ''))
+endfunction
+unittestRunTest('testMarkowitzOnUpdateGroupStocks')
+
+
+# Test a group save - its message and re-rendered page
+async function testOnSaveGroup(symbolsText, setGroupResponse, fetchCount, message):
+    args = {'page': 'group', 'group': 'S&P 100'}
+    data = testGroupData()
+    objectSet(data, 'documentInputValue', {'markowitz-group-symbols': symbolsText})
+    if setGroupResponse != null:
+        objectSet(objectGet(data, 'systemFetch'), 'setGroup', setGroupResponse)
+    endif
+    unittestMockAll(data)
+    markowitzOnSaveGroup(args, 'S&P 100')
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['documentInputValue', ['markowitz-group-symbols']])
+    if fetchCount:
+        unittestDeepEqual(arrayGet(calls, 1), ['systemFetch', [{'url': 'setGroup', 'body': '{"name":"S&P 100","symbols":["IBM","KO"]}'}]])
+    endif
+    unittestDeepEqual(arraySlice(calls, 1 + fetchCount), testPageCalls(systemPartial(markowitzGroupPage, args, message), data))
+endfunction
+
+
+async function testMarkowitzOnSaveGroup():
+    testOnSaveGroup('ko ibm', '{}', 1, 'Saved the group.')
+endfunction
+unittestRunTest('testMarkowitzOnSaveGroup')
+
+
+async function testMarkowitzOnSaveGroup_error():
+    testOnSaveGroup('ko ibm', null, 1, 'The group could not be saved.')
+endfunction
+unittestRunTest('testMarkowitzOnSaveGroup_error')
+
+
+async function testMarkowitzOnSaveGroup_invalid():
+    testOnSaveGroup(' ', null, 0, 'Enter one to one thousand stock symbols.')
+endfunction
+unittestRunTest('testMarkowitzOnSaveGroup_invalid')
+
+
+async function testMarkowitzOnDeleteGroup():
+    unittestMockAll({'systemFetch': {'deleteGroup': '{}'}})
+    markowitzOnDeleteGroup({'page': 'group', 'group': 'S&P 100'}, 'S&P 100')
+    unittestDeepEqual(unittestMockEnd(), [ \
+        ['systemFetch', [{'url': 'deleteGroup', 'body': '{"name":"S&P 100"}'}]], \
+        ['windowSetLocation', ["#var.vPage='groups'"]] \
+    ])
+endfunction
+unittestRunTest('testMarkowitzOnDeleteGroup')
+
+
+async function testMarkowitzOnDeleteGroup_error():
+    args = {'page': 'group', 'group': 'S&P 100'}
+    data = testGroupData()
+    unittestMockAll(data)
+    markowitzOnDeleteGroup(args, 'S&P 100')
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['systemFetch', [{'url': 'deleteGroup', 'body': '{"name":"S&P 100"}'}]])
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(systemPartial(markowitzGroupPage, args, 'The group could not be deleted.'), data))
+endfunction
+unittestRunTest('testMarkowitzOnDeleteGroup_error')

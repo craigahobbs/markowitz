@@ -1,0 +1,45 @@
+include <unittest.bare>
+include <unittestMock.bare>
+include '../../frontend/markowitzCommon.bare'
+include 'testMarkowitzHelpers.bare'
+
+
+#
+# Helper tests
+#
+
+
+function testMarkowitzSymbolList():
+    unittestDeepEqual(markowitzSymbolList(testStocks), ['IBM', 'KO'])
+    unittestDeepEqual(markowitzSymbolList([]), [])
+endfunction
+unittestRunTest('testMarkowitzSymbolList')
+
+
+function testMarkowitzMissingSymbols():
+    unittestDeepEqual(markowitzMissingSymbols(['MSFT', 'IBM', 'XYZ', 'KO'], testStocks), ['MSFT', 'XYZ'])
+    unittestDeepEqual(markowitzMissingSymbols(['IBM'], testStocks), [])
+endfunction
+unittestRunTest('testMarkowitzMissingSymbols')
+
+
+function testMarkowitzParseList():
+    unittestDeepEqual(markowitzParseList(''), [])
+    unittestDeepEqual(markowitzParseList(' , '), [])
+    unittestDeepEqual(markowitzParseList(' ibm,KO  msft, '), ['ibm', 'KO', 'msft'])
+endfunction
+unittestRunTest('testMarkowitzParseList')
+
+
+function testMarkowitzPercentText():
+    unittestEqual(markowitzPercentText(12.345), '12.35%')
+    unittestEqual(markowitzPercentText(-5), '-5.00%')
+    unittestEqual(markowitzPercentText(null), '')
+endfunction
+unittestRunTest('testMarkowitzPercentText')
+
+
+function testMarkowitzDatetimeText():
+    unittestEqual(markowitzDatetimeText(testCreated), testCreatedText)
+endfunction
+unittestRunTest('testMarkowitzDatetimeText')
