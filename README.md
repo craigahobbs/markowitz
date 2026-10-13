@@ -42,6 +42,8 @@ more stocks than months, which the new run form computes and uses.
 
 ## Setup
 
+For step-by-step instructions to install and run Markowitz on a Mac, see [SETUP.md](https://github.com/craigahobbs/markowitz/blob/main/SETUP.md).
+
 The application reads its configuration from environment variables:
 
 | Variable | Description |
