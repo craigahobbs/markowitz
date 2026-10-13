@@ -176,8 +176,8 @@ async function testMarkowitzAdminInit():
         'Saved the group "Group A" (2 stocks)', \
         'Saved the group "Group B" (1 stocks)', \
         'Downloading 2 stocks\' prices...', \
-        'Failed to update IBM: Download failed - is "IBM" a Yahoo Finance symbol?', \
-        'Failed to update KO: Download failed - is "KO" a Yahoo Finance symbol?', \
+        'Failed to update IBM: Download failed - is "IBM" a Yahoo Finance symbol? If so, try again later.', \
+        'Failed to update KO: Download failed - is "KO" a Yahoo Finance symbol? If so, try again later.', \
         'Updated 0 of 2 stocks', \
         'Failed to update the stocks - is Yahoo Finance available?' \
     ])

@@ -54,7 +54,7 @@ function markowitzParseYahoo(symbol, responseText):
     chart = if(response != null, objectGet(response, 'chart'))
     chartResults = if(chart != null, objectGet(chart, 'result'))
     if !chartResults:
-        return {'error': 'Download failed - is "' + symbol + '" a Yahoo Finance symbol?'}
+        return {'error': 'Download failed - is "' + symbol + '" a Yahoo Finance symbol? If so, try again later.'}
     endif
     chartResult = arrayGet(chartResults, 0)
     meta = objectGet(chartResult, 'meta', {})

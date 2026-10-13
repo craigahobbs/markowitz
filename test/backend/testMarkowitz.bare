@@ -250,7 +250,7 @@ async function testUpdateStocks():
             {'symbol': 'KO', 'error': 'Database update failed (conflict)'}, \
             {'symbol': 'NEW', 'stock': stockNEW}, \
             {'symbol': 'OLD', 'stock': stockOLD}, \
-            {'symbol': 'XYZ', 'error': 'Download failed - is "XYZ" a Yahoo Finance symbol?'} \
+            {'symbol': 'XYZ', 'error': 'Download failed - is "XYZ" a Yahoo Finance symbol? If so, try again later.'} \
         ]}] \
     )
 

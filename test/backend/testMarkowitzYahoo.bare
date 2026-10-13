@@ -47,7 +47,7 @@ unittestRunTest('testMarkowitzParseYahoo_daylightSaving')
 
 
 function testMarkowitzParseYahoo_downloadFailed():
-    error = {'error': 'Download failed - is "TEST" a Yahoo Finance symbol?'}
+    error = {'error': 'Download failed - is "TEST" a Yahoo Finance symbol? If so, try again later.'}
     unittestDeepEqual(markowitzParseYahoo('TEST', null), error)
     unittestDeepEqual(markowitzParseYahoo('TEST', '{}'), error)
     unittestDeepEqual(markowitzParseYahoo('TEST', '{"chart": {"result": null, "error": {"code": "Not Found"}}}'), error)
