@@ -139,6 +139,21 @@ endfunction
 unittestRunTest('testMarkowitzOnUpdateStocks_duplicates')
 
 
+async function testMarkowitzOnUpdateStocks_done():
+    # The update's timeout downloads its stocks, then renders the stocks page with the update's message
+    args = {'page': 'stocks'}
+    data = testStocksPageData([])
+    objectSet(data, 'documentInputValue', {'markowitz-symbols': ' msft,xyz ibm '})
+    callbacks = testCaptureTimeouts(systemPartial(markowitzOnUpdateStocks, args, null), data)
+    update = { \
+        'title': 'Stocks', 'back': null, 'symbols': ['IBM', 'MSFT', 'XYZ'], 'count': 0, 'updated': [], 'failed': [], \
+        'pageFn': systemPartial(markowitzStocksPage, args) \
+    }
+    testSameEffect(arrayGet(callbacks, 0), systemPartial(markowitzOnUpdateChunk, update), data)
+endfunction
+unittestRunTest('testMarkowitzOnUpdateStocks_done')
+
+
 async function testMarkowitzOnUpdateStocks_symbols():
     unittestMockAll()
     markowitzOnUpdateStocks({'page': 'stocks'}, ['KO', 'IBM'])

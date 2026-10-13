@@ -295,6 +295,22 @@ endfunction
 unittestRunTest('testMarkowitzOnUpdateGroupStocks')
 
 
+async function testMarkowitzOnUpdateGroupStocks_done():
+    # The update's timeout downloads its stocks, then renders the group's page with the update's message
+    args = {'page': 'group', 'group': 'S&P 100'}
+    symbols = ['IBM', 'KO', 'MSFT']
+    data = testGroupData()
+    objectSet(objectGet(data, 'systemFetch'), 'updateStocks', jsonStringify({'results': []}))
+    callbacks = testCaptureTimeouts(systemPartial(markowitzOnUpdateGroupStocks, args, 'S&P 100', symbols), data)
+    update = { \
+        'title': 'S&P 100', 'back': {'page': 'groups'}, 'symbols': symbols, 'count': 0, 'updated': [], 'failed': [], \
+        'pageFn': systemPartial(markowitzGroupPage, args) \
+    }
+    testSameEffect(arrayGet(callbacks, 0), systemPartial(markowitzOnUpdateChunk, update), data)
+endfunction
+unittestRunTest('testMarkowitzOnUpdateGroupStocks_done')
+
+
 # Test a group save - its message and re-rendered page
 async function testOnSaveGroup(symbolsText, setGroupResponse, fetchCount, message):
     args = {'page': 'group', 'group': 'S&P 100'}
