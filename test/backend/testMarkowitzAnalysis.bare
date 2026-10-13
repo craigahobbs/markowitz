@@ -36,6 +36,32 @@ endfunction
 unittestRunTest('testMarkowitzAnalyze')
 
 
+function testMarkowitzAnalyze_constraints():
+    # Each solved portfolio's weights are non-negative, sum to one, and meet the target return
+    analysis = markowitzAnalyzeStocks(testSymbols, testAnalysisRelatives, testHorizonRelatives, 3)
+    expected = objectGet(analysis, 'expected')
+    for target in testTargets:
+        portfolio = markowitzPortfolio( \
+            testSymbols, objectGet(analysis, 'covariance'), expected, objectGet(analysis, 'growths'), 3, target \
+        )
+        if objectGet(portfolio, 'solved'):
+            weightSum = 0
+            portfolioExpected = 0
+            for allocation in objectGet(portfolio, 'allocations'):
+                weight = objectGet(allocation, 'weight')
+                unittestEqual(weight >= 0, true)
+                weightSum = weightSum + weight
+                portfolioExpected = portfolioExpected + \
+                    weight * arrayGet(expected, arrayIndexOf(testSymbols, objectGet(allocation, 'symbol')))
+            endfor
+            unittestEqual(testRound(weightSum), 1)
+            unittestEqual(testRound(markowitzAnnualReturn(1 + portfolioExpected / 100, 12)), testRound(target))
+        endif
+    endfor
+endfunction
+unittestRunTest('testMarkowitzAnalyze_constraints')
+
+
 function testMarkowitzAnalyze_noHorizon():
     analysis = testAnalyze(['A', 'B', 'C'], arraySlice(testAnalysisRelatives, 0, 3), [[1.1], null, [1.0]], 1, [10])
     stocks = objectGet(analysis, 'stocks')
@@ -58,10 +84,33 @@ endfunction
 unittestRunTest('testMarkowitzPortfolio_singular')
 
 
+# A markowitzInverseDelete whose singular test is fooled by rounding error
+function testInverseDeleteRounding():
+    return true
+endfunction
+
+
+function testMarkowitzPortfolio_oneStock():
+    # The target return is above both stocks' - deleting the negative weight leaves one stock, which is unsolved even
+    # when the updated inverse's rounding error passes the singular test
+    inverseDelete = markowitzInverseDelete
+    systemGlobalSet('markowitzInverseDelete', testInverseDeleteRounding)
+    portfolio = markowitzPortfolio(['A', 'B'], [[4, 1], [1, 9]], [1, 0.5], [null, null], 3, 40)
+    systemGlobalSet('markowitzInverseDelete', inverseDelete)
+    unittestEqual(objectGet(portfolio, 'solved'), false)
+    unittestDeepEqual(objectGet(portfolio, 'allocations'), [])
+    unittestDeepEqual(objectGet(portfolio, 'deleted'), ['B'])
+endfunction
+unittestRunTest('testMarkowitzPortfolio_oneStock')
+
+
+
 function testMarkowitzAnnualReturn():
     unittestEqual(markowitzAnnualReturn(1, 12), 0)
     unittestEqual(mathRound(markowitzAnnualReturn(1.01, 12) * 1e6) / 1e6, 12.682503)
     unittestEqual(mathRound(markowitzAnnualReturn(1.1, 4) * 1e6) / 1e6, 46.41)
+    unittestEqual(markowitzAnnualReturn(0, 12), -100)
+    unittestEqual(markowitzAnnualReturn(-1.5, 12), -100)
 endfunction
 unittestRunTest('testMarkowitzAnnualReturn')
 

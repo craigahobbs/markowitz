@@ -130,9 +130,10 @@ function markowitzAnalyzeStocks(symbols, relatives, horizonRelatives, horizon):
 endfunction
 
 
-# Annualize a growth ratio - returns the annual percent return
+# Annualize a growth ratio - returns the annual percent return. A growth below zero (e.g. a projected monthly return
+# below -100%) is a total loss.
 function markowitzAnnualReturn(growth, periodsPerYear):
-    return (growth ** periodsPerYear - 1) * 100
+    return (mathMax(growth, 0) ** periodsPerYear - 1) * 100
 endfunction
 
 
@@ -187,7 +188,10 @@ function markowitzPortfolio(symbols, covariance, expected, growths, horizon, tar
         arrayPush(deletedWeights, weightMinimum)
         arrayDelete(stockIndexes, ixMinimum)
         arrayDelete(active, ixMinimum)
-        if !markowitzInverseDelete(inverse, active, stockIndex):
+
+        # One stock can't meet both constraints - its system is singular, but the updated inverse's rounding error can
+        # hide that from the singular test
+        if !markowitzInverseDelete(inverse, active, stockIndex) || arrayLength(stockIndexes) < 2:
             return unsolved
         endif
     endwhile
