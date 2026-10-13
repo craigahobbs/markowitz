@@ -6,7 +6,7 @@ Notes for coding agents working in this repository.
 
 Markowitz is a [BareScript](https://craigahobbs.github.io/bare-script/language/) web application: a schema-validated JSON
 API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
-[MarkdownUp](https://craigahobbs.github.io/markdown-up/) frontend that calls it. Markowitz portfolio analyzer
+[MarkdownUp](https://craigahobbs.github.io/markdown-up/) frontend that calls it - a Markowitz portfolio analyzer.
 
 - `SPEC.md` - the application specification
 - `backend/markowitz.bare` - the backend: the API's action functions, and the `markowitzApplication` WSGI
@@ -53,8 +53,8 @@ API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
 - `test/` - the unit tests, `test/backend/` and `test/frontend/` - a test file for each source file, and the
   shared `testMarkowitzHelpers.bare` fixtures - with a
   `runTests.bare` runner and an `index.html` to run them in a browser. The pages load MarkdownUp from
-  `build/markdown-up/` (downloaded by `make run`), so serve the project root with a static file server (e.g.
-  `python3 -m http.server`) and open `/test/backend/` or `/test/frontend/`.
+  `build/markdown-up/` (downloaded by `make run`, or `make build/markdown-up/VERSION.txt`), so serve the project
+  root with a static file server (e.g. `python3 -m http.server`) and open `/test/backend/` or `/test/frontend/`.
 
 The backend's includes, and `systemFetch` calls made while it loads, resolve relative to `backend/` - e.g.
 `'../frontend/index.html'`. Only the directories `wsgi.py` loads (`backend/`, `frontend/`, and

@@ -108,7 +108,7 @@ The API documentation is at <http://127.0.0.1:8080/doc/>.
 | `make run` | Serve the application at <http://127.0.0.1:8080/> (`HOST` and `PORT` override) |
 | `make init` | Initialize the database - see [Setup](#setup) |
 | `make reset` | Delete and re-create the database, with the built-in stock groups - **destructive** (`make init` downloads the prices) |
-| `make clean` | Remove the build directory |
+| `make clean` | Remove the build directory and the downloaded python-build `Makefile.tool` |
 
 The unit tests must pass with 100% coverage. They run with `systemFetch` mocked - no CouchDB or network access.
 
