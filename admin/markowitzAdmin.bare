@@ -12,6 +12,9 @@ markowitzAdminServerURL = stringSlice(markowitzCouchURL, 0, stringLastIndexOf(ma
 # The built-in stock groups that "init" and "reset" save - Yahoo Finance symbols (e.g. "BRK-B")
 markowitzAdminGroups = jsonParse(systemFetch('markowitzGroups.json'))
 
+# The number of stocks downloaded and saved by each "updateStocks" call of "init" - the action's maximum
+markowitzAdminUpdateChunkSize = 50
+
 
 # Run an administration command - returns the exit status
 async function markowitzAdmin(args):
@@ -65,23 +68,29 @@ async function markowitzAdminInit():
         return 1
     endif
 
-    # Download the groups' stocks' prices
-    systemLog('Downloading ' + arrayLength(symbols) + ' stocks\' prices...')
-    results = objectGet(updateStocks({'symbols': symbols}), 'results')
-    if results == null:
-        systemLog('Failed to save the stocks')
-        return 1
-    endif
+    # Download the groups' stocks' prices, a chunk at a time - a failed save loses only its chunk
+    symbolCount = arrayLength(symbols)
+    systemLog('Downloading ' + symbolCount + ' stocks\' prices...')
     updatedCount = 0
-    for result in results:
-        error = objectGet(result, 'error')
-        if error != null:
-            systemLog('Failed to update ' + objectGet(result, 'symbol') + ': ' + error)
-        else:
-            updatedCount = updatedCount + 1
+    ixChunk = 0
+    while ixChunk < symbolCount:
+        chunk = arraySlice(symbols, ixChunk, mathMin(ixChunk + markowitzAdminUpdateChunkSize, symbolCount))
+        ixChunk = ixChunk + arrayLength(chunk)
+        results = objectGet(updateStocks({'symbols': chunk}), 'results')
+        if results == null:
+            systemLog('Failed to save the stocks ' + arrayJoin(chunk, ', '))
+            continue
         endif
-    endfor
-    systemLog('Updated ' + updatedCount + ' of ' + arrayLength(results) + ' stocks')
+        for result in results:
+            error = objectGet(result, 'error')
+            if error != null:
+                systemLog('Failed to update ' + objectGet(result, 'symbol') + ': ' + error)
+            else:
+                updatedCount = updatedCount + 1
+            endif
+        endfor
+    endwhile
+    systemLog('Updated ' + updatedCount + ' of ' + symbolCount + ' stocks')
     if !updatedCount:
         systemLog('Failed to update the stocks - is Yahoo Finance available?')
         return 1

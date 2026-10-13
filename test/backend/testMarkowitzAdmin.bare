@@ -299,9 +299,39 @@ async function testMarkowitzAdminInit_stocksError():
     result = testAdminRun(['init'], fetchData)
     unittestEqual(arrayGet(result, 0), 1)
     calls = arrayGet(result, 1)
-    unittestDeepEqual(arrayGet(calls, arrayLength(calls) - 1), testAdminLog('Failed to save the stocks'))
+    unittestDeepEqual(arraySlice(calls, arrayLength(calls) - 3), [ \
+        testAdminLog('Failed to save the stocks IBM, KO'), \
+        testAdminLog('Updated 0 of 2 stocks'), \
+        testAdminLog('Failed to update the stocks - is Yahoo Finance available?') \
+    ])
 endfunction
 unittestRunTest('testMarkowitzAdminInit_stocksError')
+
+
+async function testMarkowitzAdminInit_chunks():
+    # A chunk of one stock - each stock is downloaded and saved by its own update, and each update's failure is logged
+    fetchData = testAdminFetchData()
+    objectSet(fetchData, testAdminServerURL + '/_session', testAdminSession)
+    objectSet(fetchData, testAdminServerURL + '/_users', '{"ok": true}')
+    objectSet(fetchData, testAdminServerURL + '/_replicator', '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL, '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL + '/_all_docs', jsonStringify({'rows': []}))
+    objectSet(fetchData, testAdminCouchURL + '/group%3AGroup%20A', '{"ok": true}')
+    objectSet(fetchData, testAdminCouchURL + '/group%3AGroup%20B', '{"ok": true}')
+    chunkSize = markowitzAdminUpdateChunkSize
+    systemGlobalSet('markowitzAdminUpdateChunkSize', 1)
+    result = testAdminRun(['init'], fetchData)
+    systemGlobalSet('markowitzAdminUpdateChunkSize', chunkSize)
+    unittestEqual(arrayGet(result, 0), 1)
+    logs = []
+    for call in arrayGet(result, 1):
+        if arrayGet(call, 0) == 'systemLog' && stringStartsWith(arrayGet(arrayGet(call, 1), 0), 'Failed to save the stocks'):
+            arrayPush(logs, arrayGet(arrayGet(call, 1), 0))
+        endif
+    endfor
+    unittestDeepEqual(logs, ['Failed to save the stocks IBM', 'Failed to save the stocks KO'])
+endfunction
+unittestRunTest('testMarkowitzAdminInit_chunks')
 
 
 #
