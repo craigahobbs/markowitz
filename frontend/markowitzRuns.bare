@@ -322,12 +322,16 @@ async function markowitzOnRunStop(progress):
 endfunction
 
 
-# Render a running run's page - from the run's page (continued), render it with the message, otherwise go to it
+# Render a running run's page - from the run's page (continued), or with a message, render it with the message (going
+# to the run's page would lose the message), otherwise go to it
 async function markowitzRunProgressDone(progress, message):
     args = objectGet(progress, 'args')
+    id = objectGet(progress, 'id')
     if objectGet(args, 'page') == 'run':
         markowitzRunPage(args, message)
-        return
+    elif message:
+        markowitzRunPage({'page': 'run', 'id': id}, message)
+    else:
+        windowSetLocation(argsURL(markowitzArguments, {'page': 'run', 'id': id}, true))
     endif
-    windowSetLocation(argsURL(markowitzArguments, {'page': 'run', 'id': objectGet(progress, 'id')}, true))
 endfunction

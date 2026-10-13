@@ -401,6 +401,20 @@ endfunction
 unittestRunTest('testMarkowitzOnRunPortfolio_error')
 
 
+async function testMarkowitzOnRunPortfolio_errorNew():
+    # From the new run page - the run's page is rendered with the message, rather than going to it
+    data = {'systemFetch': {'getRun?id=r1': jsonStringify({'run': testRun})}}
+    unittestMockAll(data)
+    markowitzOnRunPortfolio(testRunProgress(2))
+    calls = unittestMockEnd()
+    unittestDeepEqual(arrayGet(calls, 0), ['systemFetch', [{'url': 'computeRunPortfolio', 'body': '{"id":"r1"}'}]])
+    message = 'Computing the run\'s portfolio failed.'
+    expectedFn = systemPartial(markowitzRunPage, {'page': 'run', 'id': 'r1'}, message)
+    unittestDeepEqual(arraySlice(calls, 1), testPageCalls(expectedFn, data))
+endfunction
+unittestRunTest('testMarkowitzOnRunPortfolio_errorNew')
+
+
 async function testMarkowitzOnRunStop():
     progress = testRunProgress(1)
     unittestMockAll()
