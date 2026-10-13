@@ -30,10 +30,12 @@ markowitzUpdateChunkSize = 10
 #
 
 
+# Fetch before rendering - when a stock update is stopped, its in-progress chunk can finish during the fetches and render
+# the output printed so far (MarkdownUp doesn't queue a click behind a window timeout's callback)
 async function markowitzStocksPage(args, message):
-    markowitzHeader('Stocks')
     response = markowitzFetch('getStocks')
     groupsResponse = markowitzFetch('getGroups')
+    markowitzHeader('Stocks')
     if response == null || groupsResponse == null:
         markdownPrint('**Error:** The stocks could not be loaded.')
         return
@@ -84,7 +86,7 @@ endfunction
 # Download and update stocks - the stock symbols input's stocks if the symbols are null
 async function markowitzOnUpdateStocks(args, symbols):
     if symbols == null:
-        symbols = markowitzParseList(documentInputValue(markowitzSymbolsInputID))
+        symbols = markowitzSymbols(markowitzParseList(documentInputValue(markowitzSymbolsInputID)))
         if objectHas(schemaValidateEx(markowitzTypes, 'updateStocks_input', {'symbols': symbols}), 'error'):
             markowitzStocksPage(args, 'Enter one to fifty stock symbols.')
             return

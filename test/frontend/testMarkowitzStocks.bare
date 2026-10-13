@@ -22,10 +22,9 @@ testStocksPageText = ['markdownPrint', [ \
 async function testMarkowitzStocksPage():
     unittestMockAll(testNewRunData())
     markowitzStocksPage({'page': 'stocks'})
-    expected = testHeaderCalls('Stocks', 'Stocks')
+    expected = [['systemFetch', ['getStocks']], ['systemFetch', ['getGroups']]]
+    arrayExtend(expected, testHeaderCalls('Stocks', 'Stocks'))
     arrayPush(expected, \
-        ['systemFetch', ['getStocks']], \
-        ['systemFetch', ['getGroups']], \
         testStocksPageText, \
         ['elementModelRender', [{'html': 'p', 'elem': [ \
             formsTextElements('markowitz-symbols', '', 40), \
@@ -51,10 +50,9 @@ unittestRunTest('testMarkowitzStocksPage')
 async function testMarkowitzStocksPage_empty():
     unittestMockAll(testNewRunData([], []))
     markowitzStocksPage({'page': 'stocks'}, 'Enter one to fifty stock symbols.')
-    expected = testHeaderCalls('Stocks', 'Stocks')
+    expected = [['systemFetch', ['getStocks']], ['systemFetch', ['getGroups']]]
+    arrayExtend(expected, testHeaderCalls('Stocks', 'Stocks'))
     arrayPush(expected, \
-        ['systemFetch', ['getStocks']], \
-        ['systemFetch', ['getGroups']], \
         ['markdownPrint', ['**Enter one to fifty stock symbols.**', '']], \
         testStocksPageText, \
         ['elementModelRender', [{'html': 'p', 'elem': [ \
@@ -72,10 +70,9 @@ unittestRunTest('testMarkowitzStocksPage_empty')
 async function testMarkowitzStocksPage_error():
     unittestMockAll({'systemFetch': {'getGroups': jsonStringify({'groups': testGroups})}})
     markowitzStocksPage({'page': 'stocks'})
-    expected = testHeaderCalls('Stocks', 'Stocks')
+    expected = [['systemFetch', ['getStocks']], ['systemFetch', ['getGroups']]]
+    arrayExtend(expected, testHeaderCalls('Stocks', 'Stocks'))
     arrayPush(expected, \
-        ['systemFetch', ['getStocks']], \
-        ['systemFetch', ['getGroups']], \
         ['markdownPrint', ['**Error:** The stocks could not be loaded.']] \
     )
     unittestDeepEqual(unittestMockEnd(), expected)
@@ -129,6 +126,17 @@ async function testMarkowitzOnUpdateStocks():
     unittestDeepEqual(unittestMockEnd(), expected)
 endfunction
 unittestRunTest('testMarkowitzOnUpdateStocks')
+
+
+async function testMarkowitzOnUpdateStocks_duplicates():
+    # Fifty-one symbols, one unique - the symbols are validated after duplicates are removed
+    unittestMockAll({'documentInputValue': {'markowitz-symbols': arrayJoin(arrayNewSize(51, 'ibm'), ' ')}})
+    markowitzOnUpdateStocks({'page': 'stocks'}, null)
+    expected = [['documentInputValue', ['markowitz-symbols']]]
+    arrayExtend(expected, testUpdateProgressCalls('Stocks', null, 0, 1, '0', ''))
+    unittestDeepEqual(unittestMockEnd(), expected)
+endfunction
+unittestRunTest('testMarkowitzOnUpdateStocks_duplicates')
 
 
 async function testMarkowitzOnUpdateStocks_symbols():
