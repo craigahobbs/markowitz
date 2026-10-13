@@ -1,13 +1,13 @@
 # Markowitz
 
 Markowitz is a portfolio analyzer: for a group of stocks (e.g. the S&P 100), it computes the minimum-risk portfolio
-for each of a set of target annual returns, the method of [Harry Markowitz](https://en.wikipedia.org/wiki/Modern_portfolio_theory).
+for each of a set of target annual returns, the method of [Harry Markowitz](https://grokipedia.com/page/Harry_Markowitz).
 
 Its analysis is a port of Program HOBBS, a Fortran 2.1 program written in 1967 to test the Markowitz method on a
 brand-new IBM mainframe at OSU - which could handle at most 52 stocks. See
 [the original program](original/#readme), and an email from its author describing it.
 
-Markowitz is a full-stack [BareScript](https://craigahobbs.github.io/bare-script/) application: a schema-validated
+Markowitz is a full-stack [BareScript](https://craigahobbs.github.io/bare-script/language/) application: a schema-validated
 JSON API backend, served by Python, and a [MarkdownUp](https://craigahobbs.github.io/markdown-up/) frontend that calls
 it. Stock prices are downloaded from Yahoo Finance and stored in [CouchDB](https://couchdb.apache.org/).
 

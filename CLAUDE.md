@@ -4,7 +4,7 @@ Notes for coding agents working in this repository.
 
 ## Project overview
 
-Markowitz is a [BareScript](https://craigahobbs.github.io/bare-script/) web application: a schema-validated JSON
+Markowitz is a [BareScript](https://craigahobbs.github.io/bare-script/language/) web application: a schema-validated JSON
 API backend, served by Python ([WSGI](https://peps.python.org/pep-3333/)), and a
 [MarkdownUp](https://craigahobbs.github.io/markdown-up/) frontend that calls it. Markowitz portfolio analyzer
 
