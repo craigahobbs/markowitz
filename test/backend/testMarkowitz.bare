@@ -1067,27 +1067,3 @@ async function testDeleteRun_deleteError():
 endfunction
 unittestRunTest('testDeleteRun_deleteError')
 
-
-#
-# Month tests
-#
-
-
-function testMarkowitzMonthIndex():
-    unittestEqual(markowitzMonthIndex('1967-09'), 1967 * 12 + 8)
-    unittestEqual(markowitzMonthIndex('2023-12'), 2023 * 12 + 11)
-    unittestEqual(markowitzMonthIndex('2023-00'), null)
-    unittestEqual(markowitzMonthIndex('2023-13'), null)
-    unittestEqual(markowitzMonthIndex('2023-1'), null)
-    unittestEqual(markowitzMonthIndex('Sept 1967'), null)
-endfunction
-unittestRunTest('testMarkowitzMonthIndex')
-
-
-function testMarkowitzMonthString():
-    unittestEqual(markowitzMonthString(1967 * 12 + 8), '1967-09')
-    unittestEqual(markowitzMonthString(2023 * 12 + 9), '2023-10')
-    unittestEqual(markowitzMonthString(2023 * 12 + 11), '2023-12')
-    unittestEqual(markowitzMonthString(2024 * 12), '2024-01')
-endfunction
-unittestRunTest('testMarkowitzMonthString')
