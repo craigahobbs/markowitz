@@ -16,18 +16,18 @@ markowitzYahooHeaders = {'User-Agent': 'Mozilla/5.0 (compatible; Markowitz)'}
 markowitzHalfDaySeconds = 43200
 
 
-# Download stocks' monthly prices - returns the array of each stock's document fields (null if its download failed)
+# Download stocks' monthly prices - returns the array of each stock's parsed download (see markowitzParseYahoo)
 async function markowitzYahooDownload(symbols):
     requests = []
     for symbol in symbols:
         url = markowitzYahooURL + urlEncodeComponent(symbol) + markowitzYahooQuery
         arrayPush(requests, {'url': url, 'headers': markowitzYahooHeaders})
     endfor
-    stocks = []
-    for responseText in systemFetch(requests):
-        arrayPush(stocks, markowitzParseYahoo(responseText))
+    downloads = []
+    for responseText, ixResponse in systemFetch(requests):
+        arrayPush(downloads, markowitzParseYahoo(arrayGet(symbols, ixResponse), responseText))
     endfor
-    return stocks
+    return downloads
 endfunction
 
 
@@ -46,14 +46,15 @@ function markowitzTimestampMonth(timestamp):
 endfunction
 
 
-# Parse a Yahoo Finance chart API monthly response - returns the stock document fields, or null on failure. The month
-# of the latest trade is incomplete, so it's excluded (and so are any later months).
-function markowitzParseYahoo(responseText):
+# Parse a stock's Yahoo Finance chart API monthly response - returns {"stock": fields} (the stock document fields), or
+# {"error": message} on failure. The month of the latest trade is incomplete, so it's excluded (and so are any later
+# months) - a stock first traded this month has no prices until next month.
+function markowitzParseYahoo(symbol, responseText):
     response = if(responseText != null, jsonParse(responseText))
     chart = if(response != null, objectGet(response, 'chart'))
     chartResults = if(chart != null, objectGet(chart, 'result'))
     if !chartResults:
-        return null
+        return {'error': 'Download failed - is "' + symbol + '" a Yahoo Finance symbol?'}
     endif
     chartResult = arrayGet(chartResults, 0)
     meta = objectGet(chartResult, 'meta', {})
@@ -67,24 +68,32 @@ function markowitzParseYahoo(responseText):
     adjcloses = objectGet(objectGet(chartResult, 'indicators', {}), 'adjclose')
     closes = if(adjcloses, objectGet(arrayGet(adjcloses, 0), 'adjclose'), [])
     prices = {}
+    hasIncomplete = false
     for timestamp, ixTimestamp in timestamps:
         month = markowitzTimestampMonth(timestamp + offset + markowitzHalfDaySeconds)
         close = if(ixTimestamp < arrayLength(closes), arrayGet(closes, ixTimestamp))
-        if month < currentMonth && close != null && close > 0:
-            objectSet(prices, month, close)
+        if close != null && close > 0:
+            if month < currentMonth:
+                objectSet(prices, month, close)
+            else:
+                hasIncomplete = true
+            endif
         endif
     endfor
     months = arraySort(objectKeys(prices))
     if !months:
-        return null
+        if hasIncomplete:
+            return {'error': 'No complete month of prices yet - its prices start in ' + currentMonth + ', the current month'}
+        endif
+        return {'error': 'Yahoo Finance has no prices for "' + symbol + '"'}
     endif
 
-    return { \
+    return {'stock': { \
         'name': objectGet(meta, 'longName') || objectGet(meta, 'shortName'), \
         'currency': objectGet(meta, 'currency'), \
         'firstMonth': arrayGet(months, 0), \
         'lastMonth': arrayGet(months, arrayLength(months) - 1), \
         'monthCount': arrayLength(months), \
         'prices': prices \
-    }
+    }}
 endfunction

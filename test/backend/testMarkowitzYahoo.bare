@@ -18,14 +18,14 @@ unittestRunTest('testMarkowitzTimestampMonth')
 
 
 function testMarkowitzParseYahoo():
-    unittestDeepEqual(markowitzParseYahoo(testYahooResponse({'longName': 'Test Corporation', 'currency': 'USD'})), { \
+    unittestDeepEqual(markowitzParseYahoo('TEST', testYahooResponse({'longName': 'Test Corporation', 'currency': 'USD'})), {'stock': { \
         'name': 'Test Corporation', \
         'currency': 'USD', \
         'firstMonth': '2026-07', \
         'lastMonth': '2026-09', \
         'monthCount': 3, \
         'prices': {'2026-07': 9, '2026-08': 10, '2026-09': 12} \
-    })
+    }})
 endfunction
 unittestRunTest('testMarkowitzParseYahoo')
 
@@ -38,21 +38,44 @@ function testMarkowitzParseYahoo_daylightSaving():
         'timestamp': [1772341200, 1775016000, 1777608000, 1780286400, 1796090400], \
         'indicators': {'adjclose': [{'adjclose': [3, 4, 5, 6, 7]}]} \
     }]}})
-    unittestDeepEqual(objectGet(markowitzParseYahoo(response), 'prices'), {'2026-03': 3, '2026-04': 4, '2026-05': 5, '2026-06': 6})
+    unittestDeepEqual( \
+        objectGet(objectGet(markowitzParseYahoo('TEST', response), 'stock'), 'prices'), \
+        {'2026-03': 3, '2026-04': 4, '2026-05': 5, '2026-06': 6} \
+    )
 endfunction
 unittestRunTest('testMarkowitzParseYahoo_daylightSaving')
 
 
-function testMarkowitzParseYahoo_failure():
-    unittestEqual(markowitzParseYahoo(null), null)
-    unittestEqual(markowitzParseYahoo('{}'), null)
-    unittestEqual(markowitzParseYahoo('{"chart": {"result": null, "error": {"code": "Not Found"}}}'), null)
-    unittestEqual(markowitzParseYahoo('{"chart": {"result": []}}'), null)
-
-    # No adjusted prices
-    unittestEqual(markowitzParseYahoo('{"chart": {"result": [{"timestamp": [0], "indicators": {}}]}}'), null)
-
-    # Only the current month
-    unittestEqual(markowitzParseYahoo('{"chart": {"result": [{"timestamp": [0], "indicators": {"adjclose": [{"adjclose": [1]}]}}]}}'), null)
+function testMarkowitzParseYahoo_downloadFailed():
+    error = {'error': 'Download failed - is "TEST" a Yahoo Finance symbol?'}
+    unittestDeepEqual(markowitzParseYahoo('TEST', null), error)
+    unittestDeepEqual(markowitzParseYahoo('TEST', '{}'), error)
+    unittestDeepEqual(markowitzParseYahoo('TEST', '{"chart": {"result": null, "error": {"code": "Not Found"}}}'), error)
+    unittestDeepEqual(markowitzParseYahoo('TEST', '{"chart": {"result": []}}'), error)
 endfunction
-unittestRunTest('testMarkowitzParseYahoo_failure')
+unittestRunTest('testMarkowitzParseYahoo_downloadFailed')
+
+
+function testMarkowitzParseYahoo_noPrices():
+    # No adjusted prices
+    unittestDeepEqual( \
+        markowitzParseYahoo('TEST', '{"chart": {"result": [{"timestamp": [0], "indicators": {}}]}}'), \
+        {'error': 'Yahoo Finance has no prices for "TEST"'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzParseYahoo_noPrices')
+
+
+function testMarkowitzParseYahoo_incomplete():
+    # First traded this month (2026-10-01) - its only prices are in the current, incomplete, month
+    response = jsonStringify({'chart': {'result': [{ \
+        'meta': {'gmtoffset': -14400, 'regularMarketTime': 1791835202}, \
+        'timestamp': [1790827200, 1791835200], \
+        'indicators': {'adjclose': [{'adjclose': [73.15, 75.89]}]} \
+    }]}})
+    unittestDeepEqual( \
+        markowitzParseYahoo('TEST', response), \
+        {'error': 'No complete month of prices yet - its prices start in 2026-10, the current month'} \
+    )
+endfunction
+unittestRunTest('testMarkowitzParseYahoo_incomplete')

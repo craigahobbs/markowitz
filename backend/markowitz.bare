@@ -65,15 +65,16 @@ async function updateStocks(request):
     for symbol, ixSymbol in symbols:
         result = {'symbol': symbol}
         arrayPush(results, result)
-        stock = arrayGet(downloads, ixSymbol)
-        if stock == null:
-            objectSet(result, 'error', 'Download failed - is "' + symbol + '" a Yahoo Finance symbol?')
+        download = arrayGet(downloads, ixSymbol)
+        error = objectGet(download, 'error')
+        if error != null:
+            objectSet(result, 'error', error)
             continue
         endif
 
         id = arrayGet(ids, ixSymbol)
         doc = {'_id': id, 'type': 'stock', 'symbol': symbol, 'updated': updated}
-        objectAssign(doc, stock)
+        objectAssign(doc, objectGet(download, 'stock'))
         if objectHas(revs, id):
             objectSet(doc, '_rev', objectGet(revs, id))
         endif
